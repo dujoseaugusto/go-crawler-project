@@ -12,8 +12,8 @@ import (
 
 // PropertyRepository define as operações que podem ser realizadas no repositório de propriedades
 type PropertyRepository interface {
-	SaveProperty(ctx context.Context, property Property) error
-	GetProperties(ctx context.Context) ([]Property, error)
+	Save(ctx context.Context, property Property) error
+	FindAll(ctx context.Context) ([]Property, error)
 	Close()
 }
 
@@ -44,7 +44,7 @@ func NewMongoRepository(uri, dbName, collectionName string) (*MongoRepository, e
 	return &MongoRepository{client: client, collection: collection}, nil
 }
 
-func (r *MongoRepository) SaveProperty(ctx context.Context, property Property) error {
+func (r *MongoRepository) Save(ctx context.Context, property Property) error {
 	_, err := r.collection.InsertOne(ctx, property)
 	if err != nil {
 		return fmt.Errorf("failed to insert property: %v", err)
@@ -52,7 +52,7 @@ func (r *MongoRepository) SaveProperty(ctx context.Context, property Property) e
 	return nil
 }
 
-func (r *MongoRepository) GetProperties(ctx context.Context) ([]Property, error) {
+func (r *MongoRepository) FindAll(ctx context.Context) ([]Property, error) {
 	cursor, err := r.collection.Find(ctx, bson.M{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to find properties: %v", err)

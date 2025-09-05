@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"go-crawler-project/internal/repository"
+	"github.com/dujoseaugusto/go-crawler-project/internal/repository"
 )
 
 type PropertyService struct {

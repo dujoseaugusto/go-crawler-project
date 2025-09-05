@@ -10,6 +10,13 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
+// PropertyRepository define as operações que podem ser realizadas no repositório de propriedades
+type PropertyRepository interface {
+	SaveProperty(ctx context.Context, property Property) error
+	GetProperties(ctx context.Context) ([]Property, error)
+	Close()
+}
+
 type Property struct {
 	Endereco  string `bson:"endereco"`
 	Cidade    string `bson:"cidade"`

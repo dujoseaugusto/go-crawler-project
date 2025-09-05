@@ -4,8 +4,8 @@ import (
 	"context"
 	"log"
 
-	"go-crawler-project/internal/config"
-	"go-crawler-project/internal/crawler"
+	"github.com/dujoseaugusto/go-crawler-project/internal/config"
+	"github.com/dujoseaugusto/go-crawler-project/internal/crawler"
 
 	"github.com/joho/godotenv"
 )
@@ -18,10 +18,7 @@ func main() {
 	}
 
 	// Load application configuration
-	cfg, err := config.LoadConfig()
-	if err != nil {
-		log.Fatalf("Error loading config: %v", err)
-	}
+	cfg := config.LoadConfig()
 
 	// Create a context for the crawler
 	ctx := context.Background()

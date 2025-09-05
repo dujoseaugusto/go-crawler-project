@@ -3,8 +3,8 @@ package handler
 import (
 	"net/http"
 
+	"github.com/dujoseaugusto/go-crawler-project/internal/service"
 	"github.com/gin-gonic/gin"
-	"go-crawler-project/internal/service"
 )
 
 type PropertyHandler struct {

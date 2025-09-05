@@ -2,12 +2,15 @@ module github.com/dujoseaugusto/go-crawler-project
 
 go 1.22
 
+// Downgrades para manter compatibilidade
+replace golang.org/x/net => golang.org/x/net v0.17.0
+
 require (
 	github.com/caarlos0/env/v6 v6.9.3
 	github.com/go-chi/chi/v5 v5.0.7
 	github.com/gocolly/colly v1.2.0
 	github.com/joho/godotenv v1.4.0
-	go.mongodb.org/mongo-driver/mongo v1.9.0
+	go.mongodb.org/mongo-driver/mongo v1.8.0
 )
 
 require (

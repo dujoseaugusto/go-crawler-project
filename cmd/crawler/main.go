@@ -24,7 +24,7 @@ func main() {
 	ctx := context.Background()
 
 	// Initialize and start the crawler
-	c := crawler.NewCrawler(cfg)
+	c := crawler.NewCrawler(ctx, cfg)
 	if err := c.StartCrawling(ctx); err != nil {
 		log.Fatalf("Error starting crawler: %v", err)
 	}

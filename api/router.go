@@ -14,6 +14,7 @@ func SetupRouter(propertyService *service.PropertyService) *gin.Engine {
 	}
 
 	r.GET("/properties", propertyHandler.GetProperties)
+	r.GET("/properties/search", propertyHandler.SearchProperties)
 	r.POST("/crawler/trigger", propertyHandler.TriggerCrawler)
 
 	return r

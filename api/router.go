@@ -45,6 +45,7 @@ func SetupRouter(propertyService *service.PropertyService) *gin.Engine {
 		c.JSON(200, gin.H{
 			"status":  "healthy",
 			"service": "go-crawler-api",
+			"version": "1.0.0",
 		})
 	})
 

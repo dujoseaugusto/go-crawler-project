@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/dujoseaugusto/go-crawler-project/internal/ai"
 	"github.com/dujoseaugusto/go-crawler-project/internal/config"
@@ -15,16 +16,18 @@ import (
 )
 
 type PropertyService struct {
-	repo   repository.PropertyRepository
-	config *config.Config
-	logger *logger.Logger
+	repo    repository.PropertyRepository
+	urlRepo repository.URLRepository
+	config  *config.Config
+	logger  *logger.Logger
 }
 
-func NewPropertyService(repo repository.PropertyRepository, cfg *config.Config) *PropertyService {
+func NewPropertyService(repo repository.PropertyRepository, urlRepo repository.URLRepository, cfg *config.Config) *PropertyService {
 	return &PropertyService{
-		repo:   repo,
-		config: cfg,
-		logger: logger.NewLogger("property_service"),
+		repo:    repo,
+		urlRepo: urlRepo,
+		config:  cfg,
+		logger:  logger.NewLogger("property_service"),
 	}
 }
 
@@ -43,16 +46,9 @@ func (s *PropertyService) SearchProperties(ctx context.Context, filter repositor
 	return s.repo.FindWithFilters(ctx, filter, pagination)
 }
 
-// ForceCrawling inicia manualmente o processo de coleta de dados usando o novo crawler engine
+// ForceCrawling inicia manualmente o processo de coleta de dados usando o sistema incremental
 func (s *PropertyService) ForceCrawling(ctx context.Context) error {
-	s.logger.Info("Starting forced crawling process")
-
-	// Limpa o banco de dados antes de iniciar nova coleta
-	s.logger.Info("Clearing database before crawling")
-	if err := s.repo.ClearAll(ctx); err != nil {
-		s.logger.Error("Failed to clear database", err)
-		return fmt.Errorf("erro ao limpar banco de dados: %v", err)
-	}
+	s.logger.Info("Starting incremental crawling process")
 
 	// Carrega as URLs do arquivo de configuração
 	urls, err := s.loadURLsFromFile(s.config.SitesFile)
@@ -72,24 +68,51 @@ func (s *PropertyService) ForceCrawling(ctx context.Context) error {
 		s.logger.WithError(err).Warn("AI service not available, continuing without AI")
 	}
 
-	// Criar e iniciar o novo crawler engine
-	engine := crawler.NewCrawlerEngine(s.repo, aiService)
+	// Configuração do sistema incremental
+	config := crawler.IncrementalConfig{
+		EnableAI:             aiService != nil,   // Habilitar IA se disponível
+		EnableFingerprinting: true,               // Habilitar detecção de mudanças
+		MaxAge:               24 * time.Hour,     // Não reprocessar URLs por 24h
+		AIThreshold:          6 * time.Hour,      // Não usar IA por 6h se não houve mudanças
+		CleanupInterval:      7 * 24 * time.Hour, // Limpar registros antigos a cada 7 dias
+		MaxConcurrency:       3,                  // Máximo 3 requisições simultâneas
+		DelayBetweenRequests: 2 * time.Second,    // 2s entre requisições
+		UserAgent:           "Go-Crawler-Incremental/1.0",
+	}
 
-	s.logger.Info("Starting crawler engine")
+	// Criar e iniciar o crawler incremental
+	engine := crawler.NewIncrementalCrawlerEngine(s.repo, s.urlRepo, aiService, config)
+
+	s.logger.Info("Starting incremental crawler engine")
 	if err := engine.Start(ctx, urls); err != nil {
-		s.logger.Error("Crawler engine failed", err)
-		return fmt.Errorf("erro no crawler: %v", err)
+		s.logger.Error("Incremental crawler engine failed", err)
+		return fmt.Errorf("erro no crawler incremental: %v", err)
 	}
 
 	// Log das estatísticas finais
-	stats := engine.GetStats()
+	stats := engine.GetStatistics()
 	s.logger.WithFields(map[string]interface{}{
-		"urls_visited":     stats.URLsVisited,
-		"properties_found": stats.PropertiesFound,
-		"properties_saved": stats.PropertiesSaved,
-		"errors":           stats.ErrorsCount,
-		"success_rate":     s.calculateSuccessRate(stats.PropertiesSaved, stats.PropertiesFound),
-	}).Info("Crawling process completed")
+		"total_urls":           stats.TotalURLs,
+		"processed_urls":       stats.ProcessedURLs,
+		"skipped_urls":         stats.SkippedURLs,
+		"new_properties":       stats.NewProperties,
+		"updated_properties":   stats.UpdatedProperties,
+		"failed_urls":          stats.FailedURLs,
+		"ai_processing_count":  stats.AIProcessingCount,
+		"ai_skipped_count":     stats.AISkippedCount,
+		"fingerprint_hits":     stats.FingerprintHits,
+		"fingerprint_misses":   stats.FingerprintMisses,
+		"content_changes":      stats.ContentChanges,
+		"processing_time":      stats.ProcessingTimeTotal.String(),
+		"ai_savings_estimate":  stats.AISavingsEstimate.String(),
+		"success_rate":         s.calculateSuccessRate(stats.NewProperties+stats.UpdatedProperties, stats.ProcessedURLs),
+		"skip_rate":            s.calculateSkipRate(stats.SkippedURLs, stats.TotalURLs),
+	}).Info("Incremental crawling process completed")
+
+	// Executar limpeza de registros antigos se necessário
+	if err := s.urlRepo.CleanupOldRecords(ctx, config.CleanupInterval); err != nil {
+		s.logger.WithError(err).Warn("Failed to cleanup old records")
+	}
 
 	return nil
 }
@@ -115,4 +138,12 @@ func (s *PropertyService) calculateSuccessRate(saved, found int) float64 {
 		return 0
 	}
 	return float64(saved) / float64(found) * 100
+}
+
+// calculateSkipRate calcula a taxa de URLs puladas (otimização)
+func (s *PropertyService) calculateSkipRate(skipped, visited int) float64 {
+	if visited == 0 {
+		return 0
+	}
+	return float64(skipped) / float64(visited) * 100
 }

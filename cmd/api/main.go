@@ -28,8 +28,15 @@ func main() {
 	}
 	defer repo.Close()
 
-	// Initialize service
-	propertyService := service.NewPropertyService(repo, cfg)
+	// Initialize URL repository for incremental crawling
+	urlRepo, err := repository.NewMongoURLRepository(cfg.MongoURI, "crawler")
+	if err != nil {
+		log.Fatalf("Failed to create MongoDB URL repository: %v", err)
+	}
+	defer urlRepo.Close()
+
+	// Initialize service with both repositories
+	propertyService := service.NewPropertyService(repo, urlRepo, cfg)
 
 	// Setup router
 	router := api.SetupRouter(propertyService)

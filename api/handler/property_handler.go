@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strings"
@@ -251,7 +252,11 @@ func (h *PropertyHandler) TriggerCrawler(c *gin.Context) {
 		crawlerLogger := h.logger.WithField("operation", "crawler_execution")
 		crawlerLogger.Info("Starting crawler execution")
 
-		if err := h.Service.ForceCrawling(c.Request.Context()); err != nil {
+		// Cria um contexto independente para o crawler que não será cancelado
+		// quando a requisição HTTP terminar
+		ctx := context.Background()
+
+		if err := h.Service.ForceCrawling(ctx); err != nil {
 			crawlerLogger.Error("Error during crawler execution", err)
 		} else {
 			crawlerLogger.Info("Crawler execution completed successfully")

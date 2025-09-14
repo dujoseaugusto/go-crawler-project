@@ -16,8 +16,8 @@ func SetupRouter(propertyService *service.PropertyService) *gin.Engine {
 	// 100 requisições por hora para endpoints gerais
 	generalLimiter := middleware.NewRateLimiter(100, time.Hour)
 
-	// 10 requisições por hora para o crawler (mais restritivo)
-	crawlerLimiter := middleware.NewRateLimiter(10, time.Hour)
+	// 50 requisições por hora para o crawler (menos restritivo para debug)
+	crawlerLimiter := middleware.NewRateLimiter(50, time.Hour)
 
 	propertyHandler := handler.NewPropertyHandler(propertyService)
 
@@ -28,9 +28,9 @@ func SetupRouter(propertyService *service.PropertyService) *gin.Engine {
 	r.GET("/properties", propertyHandler.GetProperties)
 	r.GET("/properties/search", propertyHandler.SearchProperties)
 
-	// Endpoint do crawler com rate limiting mais restritivo
+	// Endpoint do crawler SEM rate limiting (temporário para debug)
 	crawlerGroup := r.Group("/crawler")
-	crawlerGroup.Use(crawlerLimiter.Middleware())
+	// crawlerGroup.Use(crawlerLimiter.Middleware()) // Comentado temporariamente
 	{
 		crawlerGroup.POST("/trigger", propertyHandler.TriggerCrawler)
 		// Debug endpoint para testar se o grupo funciona

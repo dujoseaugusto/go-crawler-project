@@ -52,7 +52,7 @@ type PropertyHandlerWrapper struct {
 
 func (w *PropertyHandlerWrapper) GetProperties(c *gin.Context) {
 	ctx := c.Request.Context()
-	
+
 	properties, err := w.mockService.GetAllProperties(ctx)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{
@@ -71,11 +71,11 @@ func (w *PropertyHandlerWrapper) GetProperties(c *gin.Context) {
 
 func (w *PropertyHandlerWrapper) SearchProperties(c *gin.Context) {
 	ctx := c.Request.Context()
-	
+
 	// Simulação básica de parsing
 	filter := repository.PropertyFilter{}
 	pagination := repository.PaginationParams{Page: 1, PageSize: 10}
-	
+
 	result, err := w.mockService.SearchProperties(ctx, filter, pagination)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{
@@ -94,7 +94,7 @@ func (w *PropertyHandlerWrapper) SearchProperties(c *gin.Context) {
 
 func (w *PropertyHandlerWrapper) TriggerCrawler(c *gin.Context) {
 	ctx := c.Request.Context()
-	
+
 	err := w.mockService.ForceCrawling(ctx)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{
@@ -133,7 +133,7 @@ func setupTestRouter(handler *PropertyHandlerWrapper) *gin.Engine {
 func TestNewPropertyHandler(t *testing.T) {
 	mockService := &service.PropertyService{}
 	handler := NewPropertyHandler(mockService)
-	
+
 	assert.NotNil(t, handler)
 	assert.Equal(t, mockService, handler.Service)
 	assert.NotNil(t, handler.logger)
@@ -217,9 +217,9 @@ func TestSearchProperties_Success(t *testing.T) {
 		PageSize:    10,
 	}
 
-	mockService.On("SearchProperties", 
-		mock.Anything, 
-		mock.Anything, 
+	mockService.On("SearchProperties",
+		mock.Anything,
+		mock.Anything,
 		mock.Anything).Return(expectedResult, nil)
 
 	req, _ := http.NewRequest("GET", "/properties/search?q=casa+praia&cidade=Rio+de+Janeiro", nil)

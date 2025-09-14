@@ -1,0 +1,30 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+healthcheckPath = "/health"
+healthcheckTimeout = 300
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
+
+# Configurações para múltiplos serviços
+[[services]]
+name = "crawler-api"
+source = "."
+
+[services.variables]
+APP_TYPE = "api"
+PORT = "8080"
+
+[[services]]
+name = "crawler-worker"
+source = "."
+
+[services.variables]
+APP_TYPE = "crawler"
+CRAWLER_MODE = "incremental"
+ENABLE_AI = "true"
+ENABLE_FINGERPRINTING = "true"
+MAX_AGE = "24h"
+AI_THRESHOLD = "6h"

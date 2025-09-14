@@ -1,0 +1,37 @@
+# Railway ignore file - arquivos que não precisam ser enviados
+
+# Development files
+.env
+.env.local
+.env.example
+env.example
+
+# Build artifacts
+bin/
+coverage.out
+coverage.html
+
+# Backups
+backups/
+
+# Documentation (opcional - pode incluir se quiser)
+*.md
+!README.md
+
+# Test files
+*_test.go
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

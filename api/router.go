@@ -1,6 +1,7 @@
 package api
 
 import (
+	"net/http"
 	"time"
 
 	"github.com/dujoseaugusto/go-crawler-project/api/handler"
@@ -21,8 +22,14 @@ func SetupRouter(propertyService *service.PropertyService) *gin.Engine {
 
 	propertyHandler := handler.NewPropertyHandler(propertyService)
 
-	// Aplicar rate limiting geral
+	// Aplicar middlewares
+	r.Use(middleware.CORSMiddleware())
 	r.Use(generalLimiter.Middleware())
+
+	// Servir arquivos estáticos da interface web
+	r.Static("/static", "./web/static")
+	r.StaticFile("/", "./web/index.html")
+	r.StaticFile("/index.html", "./web/index.html")
 
 	// Endpoints de propriedades
 	r.GET("/properties", propertyHandler.GetProperties)

@@ -16,8 +16,8 @@ func SetupRouter(propertyService *service.PropertyService) *gin.Engine {
 	// 100 requisições por hora para endpoints gerais
 	generalLimiter := middleware.NewRateLimiter(100, time.Hour)
 
-	// 50 requisições por hora para o crawler (menos restritivo para debug)
-	crawlerLimiter := middleware.NewRateLimiter(50, time.Hour)
+	// crawlerLimiter temporariamente removido para debug
+	// crawlerLimiter := middleware.NewRateLimiter(50, time.Hour)
 
 	propertyHandler := handler.NewPropertyHandler(propertyService)
 

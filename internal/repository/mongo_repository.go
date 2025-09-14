@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/dujoseaugusto/go-crawler-project/internal/utils"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -15,6 +16,7 @@ import (
 
 // PropertyFilter define os filtros disponíveis para busca
 type PropertyFilter struct {
+	Query        string  `json:"q,omitempty"`           // Busca inteligente por palavras-chave
 	Cidade       string  `json:"cidade,omitempty"`
 	Bairro       string  `json:"bairro,omitempty"`
 	TipoImovel   string  `json:"tipo_imovel,omitempty"`
@@ -106,7 +108,7 @@ func NewMongoRepository(uri, dbName, collectionName string) (*MongoRepository, e
 
 	// Cria índice único no campo hash para garantir unicidade
 	indexModel := mongo.IndexModel{
-		Keys:    bson.D{{"hash", 1}},
+		Keys:    bson.D{{Key: "hash", Value: 1}},
 		Options: options.Index().SetUnique(true),
 	}
 
@@ -164,16 +166,41 @@ func (r *MongoRepository) FindWithFilters(ctx context.Context, filter PropertyFi
 	// Construir o filtro MongoDB
 	mongoFilter := bson.M{}
 
+	// Busca inteligente por palavras-chave (filtro 'q')
+	if filter.Query != "" {
+		searchTerms := utils.CreateSearchTerms(filter.Query)
+		if len(searchTerms) > 0 {
+			// Criar regex pattern para busca flexível
+			regexPattern := utils.BuildSearchRegex(searchTerms)
+			
+			// Buscar em múltiplos campos com OR
+			queryConditions := []bson.M{
+				{"descricao": bson.M{"$regex": regexPattern, "$options": "i"}},
+				{"endereco": bson.M{"$regex": regexPattern, "$options": "i"}},
+				{"cidade": bson.M{"$regex": regexPattern, "$options": "i"}},
+				{"bairro": bson.M{"$regex": regexPattern, "$options": "i"}},
+				{"tipo_imovel": bson.M{"$regex": regexPattern, "$options": "i"}},
+				{"caracteristicas": bson.M{"$regex": regexPattern, "$options": "i"}},
+			}
+			
+			mongoFilter["$or"] = queryConditions
+		}
+	}
+
+	// Filtros específicos com busca case-insensitive e sem acentos
 	if filter.Cidade != "" {
-		mongoFilter["cidade"] = bson.M{"$regex": filter.Cidade, "$options": "i"}
+		normalizedCidade := utils.NormalizeText(filter.Cidade)
+		mongoFilter["cidade"] = bson.M{"$regex": normalizedCidade, "$options": "i"}
 	}
 
 	if filter.Bairro != "" {
-		mongoFilter["bairro"] = bson.M{"$regex": filter.Bairro, "$options": "i"}
+		normalizedBairro := utils.NormalizeText(filter.Bairro)
+		mongoFilter["bairro"] = bson.M{"$regex": normalizedBairro, "$options": "i"}
 	}
 
 	if filter.TipoImovel != "" {
-		mongoFilter["tipo_imovel"] = bson.M{"$regex": filter.TipoImovel, "$options": "i"}
+		normalizedTipo := utils.NormalizeText(filter.TipoImovel)
+		mongoFilter["tipo_imovel"] = bson.M{"$regex": normalizedTipo, "$options": "i"}
 	}
 
 	// Filtros de valor
@@ -245,7 +272,15 @@ func (r *MongoRepository) FindWithFilters(ctx context.Context, filter PropertyFi
 	findOptions := options.Find()
 	findOptions.SetSkip(int64(skip))
 	findOptions.SetLimit(int64(pagination.PageSize))
-	findOptions.SetSort(bson.D{{"valor", -1}}) // Ordenar por valor decrescente
+	
+	// Ordenação inteligente: se há busca por query, ordenar por relevância, senão por valor
+	if filter.Query != "" {
+		// Para busca por query, ordenar por valor decrescente (pode ser melhorado com score de relevância)
+		findOptions.SetSort(bson.D{{Key: "valor", Value: -1}})
+	} else {
+		// Para filtros normais, ordenar por valor decrescente
+		findOptions.SetSort(bson.D{{Key: "valor", Value: -1}})
+	}
 
 	// Executar busca
 	cursor, err := r.collection.Find(ctx, mongoFilter, findOptions)
@@ -259,6 +294,11 @@ func (r *MongoRepository) FindWithFilters(ctx context.Context, filter PropertyFi
 		return nil, fmt.Errorf("failed to decode properties: %v", err)
 	}
 
+	// Se há busca por query, calcular e ordenar por relevância
+	if filter.Query != "" && len(properties) > 0 {
+		properties = r.sortByRelevance(properties, filter.Query)
+	}
+
 	return &PropertySearchResult{
 		Properties:  properties,
 		TotalItems:  totalItems,
@@ -266,6 +306,54 @@ func (r *MongoRepository) FindWithFilters(ctx context.Context, filter PropertyFi
 		CurrentPage: pagination.Page,
 		PageSize:    pagination.PageSize,
 	}, nil
+}
+
+// sortByRelevance ordena propriedades por relevância da busca
+func (r *MongoRepository) sortByRelevance(properties []Property, query string) []Property {
+	searchTerms := utils.CreateSearchTerms(query)
+	if len(searchTerms) == 0 {
+		return properties
+	}
+
+	// Calcular score de relevância para cada propriedade
+	type PropertyWithScore struct {
+		Property Property
+		Score    float64
+	}
+
+	var scored []PropertyWithScore
+	for _, prop := range properties {
+		// Calcular score baseado em múltiplos campos
+		descScore := utils.CalculateRelevanceScore(prop.Descricao, searchTerms) * 3.0    // Peso maior para descrição
+		enderecoScore := utils.CalculateRelevanceScore(prop.Endereco, searchTerms) * 2.0 // Peso médio para endereço
+		cidadeScore := utils.CalculateRelevanceScore(prop.Cidade, searchTerms) * 1.5
+		bairroScore := utils.CalculateRelevanceScore(prop.Bairro, searchTerms) * 1.5
+		tipoScore := utils.CalculateRelevanceScore(prop.TipoImovel, searchTerms) * 1.0
+
+		totalScore := descScore + enderecoScore + cidadeScore + bairroScore + tipoScore
+
+		scored = append(scored, PropertyWithScore{
+			Property: prop,
+			Score:    totalScore,
+		})
+	}
+
+	// Ordenar por score decrescente
+	for i := 0; i < len(scored)-1; i++ {
+		for j := i + 1; j < len(scored); j++ {
+			if scored[i].Score < scored[j].Score {
+				scored[i], scored[j] = scored[j], scored[i]
+			}
+		}
+	}
+
+	// Extrair propriedades ordenadas
+	var result []Property
+	for _, item := range scored {
+		result = append(result, item.Property)
+	}
+
+	return result
 }
 
 func (r *MongoRepository) ClearAll(ctx context.Context) error {

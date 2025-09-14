@@ -1,0 +1,94 @@
+version: '3.8'
+
+services:
+  # Teste 1: Crawling completo (primeira execução)
+  crawler-full:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file: .env
+    environment:
+      - APP_TYPE=crawler
+      - CRAWLER_MODE=full
+      - ENABLE_AI=true
+      - ENABLE_FINGERPRINTING=true
+    depends_on:
+      - db
+    profiles:
+      - full
+
+  # Teste 2: Crawling incremental (segunda execução - demonstra economia)
+  crawler-incremental:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file: .env
+    environment:
+      - APP_TYPE=crawler
+      - CRAWLER_MODE=incremental
+      - ENABLE_AI=true
+      - ENABLE_FINGERPRINTING=true
+      - MAX_AGE=24h
+      - AI_THRESHOLD=6h
+    depends_on:
+      - db
+    profiles:
+      - incremental
+
+  # Teste 3: Crawling incremental sem IA (máxima velocidade)
+  crawler-fast:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file: .env
+    environment:
+      - APP_TYPE=crawler
+      - CRAWLER_MODE=incremental
+      - ENABLE_AI=false
+      - ENABLE_FINGERPRINTING=true
+      - MAX_AGE=12h
+      - AI_THRESHOLD=3h
+    depends_on:
+      - db
+    profiles:
+      - fast
+
+  # Teste 4: Mostrar estatísticas
+  crawler-stats:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file: .env
+    environment:
+      - APP_TYPE=crawler
+    depends_on:
+      - db
+    command: ["./crawler", "-stats"]
+    profiles:
+      - stats
+
+  # API para testar busca durante crawling
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file: .env
+    environment:
+      - APP_TYPE=api
+    depends_on:
+      - db
+    ports:
+      - "8081:8080"
+
+  # MongoDB
+  db:
+    image: mongo:latest
+    restart: always
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data_test:/data/db
+
+volumes:
+  mongo_data_test:
+

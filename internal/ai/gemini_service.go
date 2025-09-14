@@ -236,9 +236,9 @@ func createOptimizedPrompt(property repository.Property) string {
 Dados: Endereço:%s | Descrição:%s | Valor:%s
 
 JSON com: endereco, cidade, bairro, cep, descricao, valor, quartos, banheiros, area_total, area_util, tipo_imovel, caracteristicas`,
-		truncateString(property.Endereco, 100),
-		truncateString(property.Descricao, 200),
-		truncateString(property.ValorTexto, 50))
+		truncateString(property.Endereco, 300),   // Aumentado de 100 para 300
+		truncateString(property.Descricao, 1500), // Aumentado de 200 para 1500
+		truncateString(property.ValorTexto, 100)) // Aumentado de 50 para 100
 }
 
 // createBatchPrompt cria prompt para processamento em lote
@@ -251,9 +251,9 @@ func createBatchPrompt(properties []repository.Property) string {
 		}
 		prompt += fmt.Sprintf("Imóvel %d: %s | %s | %s\n",
 			i+1,
-			truncateString(prop.Endereco, 80),
-			truncateString(prop.Descricao, 150),
-			truncateString(prop.ValorTexto, 30))
+			truncateString(prop.Endereco, 200),  // Aumentado de 80 para 200
+			truncateString(prop.Descricao, 800), // Aumentado de 150 para 800
+			truncateString(prop.ValorTexto, 80)) // Aumentado de 30 para 80
 	}
 
 	prompt += "\nRetorne array JSON com: endereco, cidade, bairro, valor, quartos, banheiros, area_total, tipo_imovel"

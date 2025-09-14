@@ -8,6 +8,11 @@ services:
     env_file: .env
     environment:
       - APP_TYPE=crawler
+      - CRAWLER_MODE=incremental
+      - ENABLE_AI=true
+      - ENABLE_FINGERPRINTING=true
+      - MAX_AGE=24h
+      - AI_THRESHOLD=6h
     depends_on:
       - db
     ports:

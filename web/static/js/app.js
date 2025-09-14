@@ -1,5 +1,7 @@
 // Configuração da API
-const API_BASE_URL = 'https://go-crawler-project-production.up.railway.app';
+const API_BASE_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
+    ? `http://localhost:${window.location.port || 8080}` 
+    : 'https://go-crawler-project-production.up.railway.app';
 
 // Estado da aplicação
 let currentPage = 1;

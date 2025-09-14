@@ -27,8 +27,19 @@ func SetupRouter(propertyService *service.PropertyService) *gin.Engine {
 
 	// Servir arquivos estáticos da interface web
 	r.Static("/static", "./web/static")
-	r.StaticFile("/", "./web/index.html")
-	r.StaticFile("/index.html", "./web/index.html")
+
+	// Servir página principal
+	r.GET("/", func(c *gin.Context) {
+		c.File("./web/index.html")
+	})
+	r.GET("/index.html", func(c *gin.Context) {
+		c.File("./web/index.html")
+	})
+
+	// Rota adicional para servir a interface web
+	r.GET("/web", func(c *gin.Context) {
+		c.Redirect(301, "/")
+	})
 
 	// Endpoints de propriedades
 	r.GET("/properties", propertyHandler.GetProperties)

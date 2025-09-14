@@ -33,6 +33,13 @@ func SetupRouter(propertyService *service.PropertyService) *gin.Engine {
 	crawlerGroup.Use(crawlerLimiter.Middleware())
 	{
 		crawlerGroup.POST("/trigger", propertyHandler.TriggerCrawler)
+		// Debug endpoint para testar se o grupo funciona
+		crawlerGroup.GET("/debug", func(c *gin.Context) {
+			c.JSON(200, gin.H{
+				"message": "Crawler group is working",
+				"path":    c.Request.URL.Path,
+			})
+		})
 	}
 
 	// Endpoint de health check (sem rate limiting)
@@ -42,6 +49,9 @@ func SetupRouter(propertyService *service.PropertyService) *gin.Engine {
 			"service": "go-crawler-api",
 		})
 	})
+
+	// Endpoint de trigger sem rate limiting (para debug)
+	r.POST("/trigger-debug", propertyHandler.TriggerCrawler)
 
 	return r
 }

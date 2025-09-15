@@ -15,7 +15,7 @@ import (
 
 // PropertyFilter define os filtros disponíveis para busca
 type PropertyFilter struct {
-	Query        string  `json:"q,omitempty"`           // Busca inteligente por palavras-chave
+	Query        string  `json:"q,omitempty"` // Busca inteligente por palavras-chave
 	Cidade       string  `json:"cidade,omitempty"`
 	Bairro       string  `json:"bairro,omitempty"`
 	TipoImovel   string  `json:"tipo_imovel,omitempty"`
@@ -83,10 +83,10 @@ func normalizeURL(url string) string {
 	normalized := strings.ReplaceAll(url, "%20", "")
 	normalized = strings.ReplaceAll(normalized, "/%20/", "/")
 	normalized = strings.ReplaceAll(normalized, "//", "/")
-	
+
 	// Remove trailing slashes e parâmetros de query desnecessários
 	normalized = strings.TrimSuffix(normalized, "/")
-	
+
 	// Remove parâmetros comuns que não afetam o conteúdo
 	if idx := strings.Index(normalized, "?"); idx != -1 {
 		queryPart := normalized[idx+1:]
@@ -95,7 +95,7 @@ func normalizeURL(url string) string {
 			normalized = normalized[:idx]
 		}
 	}
-	
+
 	return strings.TrimSpace(strings.ToLower(normalized))
 }
 
@@ -105,35 +105,46 @@ func normalizeContent(content string) string {
 	normalized := strings.ReplaceAll(content, "\n", " ")
 	normalized = strings.ReplaceAll(normalized, "\t", " ")
 	normalized = strings.ReplaceAll(normalized, "\r", " ")
-	
+
 	// Remove espaços múltiplos
 	for strings.Contains(normalized, "  ") {
 		normalized = strings.ReplaceAll(normalized, "  ", " ")
 	}
-	
+
 	return strings.TrimSpace(strings.ToLower(normalized))
 }
 
 // GeneratePropertyHash gera um hash único baseado nas informações principais do imóvel
-// MELHORADO: Não usa URL completa, foca no conteúdo para evitar duplicatas
+// CORRIGIDO: Inclui URL normalizada para evitar colisões de hash
 func GeneratePropertyHash(property Property) string {
 	// Normaliza os dados para gerar hash consistente
 	endereco := normalizeContent(property.Endereco)
 	descricao := normalizeContent(property.Descricao)
 	cidade := normalizeContent(property.Cidade)
 	bairro := normalizeContent(property.Bairro)
-	
+
 	// Normaliza valor (arredonda para evitar diferenças mínimas)
 	valor := fmt.Sprintf("%.0f", property.Valor) // Remove decimais para valores grandes
-	
+
 	// Normaliza área
 	area := fmt.Sprintf("%.0f", property.AreaTotal)
-	
-	// Combina as informações principais (SEM URL para evitar duplicatas)
-	// Usa apenas conteúdo significativo do imóvel
-	data := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%d|%d", 
-		endereco, descricao, cidade, bairro, valor, area, 
-		property.Quartos, property.Banheiros)
+
+	// Normaliza URL para incluir no hash (evita colisões)
+	urlNormalizada := normalizeURL(property.URL)
+
+	// MELHORIA: Se os dados principais estão vazios, usa URL como identificador principal
+	if endereco == "" && descricao == "" && cidade == "" && valor == "0" {
+		// Para propriedades com dados vazios, usa URL + tipo como hash
+		data := fmt.Sprintf("empty_property|%s|%s", urlNormalizada, property.TipoImovel)
+		hash := sha256.Sum256([]byte(data))
+		return fmt.Sprintf("%x", hash)
+	}
+
+	// Combina as informações principais + URL normalizada
+	// Usa conteúdo significativo + URL para evitar colisões
+	data := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%d|%d|%s",
+		endereco, descricao, cidade, bairro, valor, area,
+		property.Quartos, property.Banheiros, urlNormalizada)
 
 	// Gera hash SHA-256
 	hash := sha256.Sum256([]byte(data))
@@ -172,18 +183,18 @@ func NewMongoRepository(uri, dbName, collectionName string) (*MongoRepository, e
 func (r *MongoRepository) Save(ctx context.Context, property Property) error {
 	// Normaliza a URL antes de salvar
 	property.URL = normalizeURL(property.URL)
-	
+
 	// Gera hash único para o imóvel (baseado no conteúdo, não na URL)
 	property.Hash = GeneratePropertyHash(property)
 
 	// Verifica se já existe um imóvel com o mesmo hash
 	var existingProperty Property
 	err := r.collection.FindOne(ctx, bson.M{"hash": property.Hash}).Decode(&existingProperty)
-	
+
 	if err == nil {
 		// Imóvel já existe - apenas atualiza a URL se for diferente (mantém a primeira encontrada)
 		if existingProperty.URL != property.URL {
-			log.Printf("Imóvel duplicado detectado - Hash: %s, URL original: %s, URL duplicada: %s", 
+			log.Printf("Imóvel duplicado detectado - Hash: %s, URL original: %s, URL duplicada: %s",
 				property.Hash, existingProperty.URL, property.URL)
 		}
 		return nil // Não salva duplicata
@@ -235,7 +246,7 @@ func (r *MongoRepository) FindWithFilters(ctx context.Context, filter PropertyFi
 		if len(searchTerms) > 0 {
 			// Criar regex pattern para busca flexível
 			regexPattern := utils.BuildSearchRegex(searchTerms)
-			
+
 			// Buscar em múltiplos campos com OR
 			queryConditions := []bson.M{
 				{"descricao": bson.M{"$regex": regexPattern, "$options": "i"}},
@@ -245,7 +256,7 @@ func (r *MongoRepository) FindWithFilters(ctx context.Context, filter PropertyFi
 				{"tipo_imovel": bson.M{"$regex": regexPattern, "$options": "i"}},
 				{"caracteristicas": bson.M{"$regex": regexPattern, "$options": "i"}},
 			}
-			
+
 			mongoFilter["$or"] = queryConditions
 		}
 	}
@@ -335,7 +346,7 @@ func (r *MongoRepository) FindWithFilters(ctx context.Context, filter PropertyFi
 	findOptions := options.Find()
 	findOptions.SetSkip(int64(skip))
 	findOptions.SetLimit(int64(pagination.PageSize))
-	
+
 	// Ordenação inteligente: se há busca por query, ordenar por relevância, senão por valor
 	if filter.Query != "" {
 		// Para busca por query, ordenar por valor decrescente (pode ser melhorado com score de relevância)

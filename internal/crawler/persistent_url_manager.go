@@ -338,44 +338,95 @@ func (pum *PersistentURLManager) NormalizeURL(rawURL string) string {
 	return normalizedURL.String()
 }
 
-// DetectPropertyPage analisa se uma página é de anúncio de imóvel
+// DetectPropertyPage analisa se uma página é de anúncio INDIVIDUAL de imóvel
 func (pum *PersistentURLManager) DetectPropertyPage(e *colly.HTMLElement) PropertyPageDetection {
 	var indicators []string
 	confidence := 0.0
 
-	// Verifica indicadores na URL
 	urlStr := e.Request.URL.String()
 	urlLower := strings.ToLower(urlStr)
+	bodyText := strings.ToLower(e.Text)
 
-	if strings.Contains(urlLower, "imovel") || strings.Contains(urlLower, "property") {
-		indicators = append(indicators, "url_contains_property_keyword")
-		confidence += 0.3
+	// PRIMEIRO: Verifica se é página de CATÁLOGO/LISTAGEM (deve CONTINUAR navegando)
+	catalogIndicators := []string{
+		"imoveis/?", "busca", "listagem", "catalogo", "pesquisa", "resultados",
+		"filtros", "ordenar", "pagina=", "page=", "/imoveis", "/properties",
 	}
 
-	// Verifica presença de preços
-	priceSelectors := []string{
-		"*[class*='price']", "*[class*='preco']", "*[class*='valor']",
-		"*[id*='price']", "*[id*='preco']", "*[id*='valor']",
+	catalogCount := 0
+	for _, indicator := range catalogIndicators {
+		if strings.Contains(urlLower, indicator) {
+			catalogCount++
+		}
 	}
 
-	for _, selector := range priceSelectors {
-		e.ForEach(selector, func(_ int, el *colly.HTMLElement) {
-			text := strings.TrimSpace(el.Text)
-			if pum.looksLikePrice(text) {
-				indicators = append(indicators, "price_found")
-				confidence += 0.4
-				return
+	// Verifica se tem múltiplos preços (indicativo de listagem)
+	priceCount := strings.Count(bodyText, "r$")
+	roomCount := strings.Count(bodyText, "quartos")
+
+	// Se parece ser catálogo, NÃO é página individual
+	if catalogCount > 0 && (priceCount > 5 || roomCount > 3) {
+		indicators = append(indicators, "catalog_page_detected")
+		return PropertyPageDetection{
+			IsPropertyPage: false,
+			Confidence:     0.0,
+			Indicators:     indicators,
+		}
+	}
+
+	// SEGUNDO: Verifica se é ANÚNCIO INDIVIDUAL (deve PARAR navegação)
+
+	// 1. URL deve indicar item específico (com ID ou slug específico)
+	individualURLPatterns := []string{
+		"/imovel/", "/property/", "/detalhes/", "/details/", "/anuncio/",
+		"/casa/", "/apartamento/", "/terreno/", "/comercial/",
+		"/venda/", "/aluguel/", "/locacao/",
+	}
+
+	hasIndividualURL := false
+	for _, pattern := range individualURLPatterns {
+		if strings.Contains(urlLower, pattern) {
+			// Verifica se tem ID ou slug após o padrão
+			if strings.Contains(urlLower, pattern) && len(strings.Split(urlLower, pattern)) > 1 {
+				afterPattern := strings.Split(urlLower, pattern)[1]
+				if len(afterPattern) > 0 && !strings.Contains(afterPattern, "?") {
+					hasIndividualURL = true
+					indicators = append(indicators, "individual_url_pattern")
+					confidence += 0.4
+					break
+				}
 			}
-		})
+		}
 	}
 
-	// Verifica características de imóveis
+	// 2. Deve ter UM preço principal (não múltiplos)
+	priceElements := 0
+	e.ForEach("*[class*='price'], *[class*='preco'], *[class*='valor'], *[id*='price'], *[id*='preco'], *[id*='valor']", func(_ int, el *colly.HTMLElement) {
+		text := strings.TrimSpace(el.Text)
+		if pum.looksLikePrice(text) {
+			priceElements++
+		}
+	})
+
+	if priceElements == 1 {
+		indicators = append(indicators, "single_price_found")
+		confidence += 0.3
+	} else if priceElements > 3 {
+		// Múltiplos preços = provavelmente catálogo
+		indicators = append(indicators, "multiple_prices_catalog")
+		return PropertyPageDetection{
+			IsPropertyPage: false,
+			Confidence:     0.0,
+			Indicators:     indicators,
+		}
+	}
+
+	// 3. Características detalhadas de UM imóvel específico
 	propertyKeywords := []string{
 		"quarto", "dormitório", "banheiro", "garagem", "área", "m²", "m2",
 		"suite", "suíte", "sala", "cozinha", "varanda", "terraço",
 	}
 
-	bodyText := strings.ToLower(e.Text)
 	keywordCount := 0
 	for _, keyword := range propertyKeywords {
 		if strings.Contains(bodyText, keyword) {
@@ -383,46 +434,41 @@ func (pum *PersistentURLManager) DetectPropertyPage(e *colly.HTMLElement) Proper
 		}
 	}
 
-	if keywordCount >= 3 {
-		indicators = append(indicators, fmt.Sprintf("property_keywords_found_%d", keywordCount))
-		confidence += float64(keywordCount) * 0.05
-	}
-
-	// Verifica estrutura típica de página de imóvel
-	structureSelectors := []string{
-		"*[class*='caracteristica']", "*[class*='feature']", "*[class*='detail']",
-		"*[class*='info']", "*[class*='specification']",
-	}
-
-	structureCount := 0
-	for _, selector := range structureSelectors {
-		e.ForEach(selector, func(_ int, el *colly.HTMLElement) {
-			structureCount++
-		})
-	}
-
-	if structureCount > 0 {
-		indicators = append(indicators, "property_structure_found")
+	if keywordCount >= 4 {
+		indicators = append(indicators, fmt.Sprintf("detailed_property_info_%d", keywordCount))
 		confidence += 0.2
 	}
 
-	// Verifica se tem galeria de fotos ou imagens
-	e.ForEach("img", func(_ int, el *colly.HTMLElement) {
-		src := strings.ToLower(el.Attr("src"))
-		alt := strings.ToLower(el.Attr("alt"))
+	// 4. Estrutura de página individual (descrição longa, detalhes)
+	descriptionLength := len(bodyText)
+	if descriptionLength > 500 && descriptionLength < 5000 { // Não muito curto, não muito longo
+		indicators = append(indicators, "appropriate_description_length")
+		confidence += 0.1
+	}
 
-		if strings.Contains(src, "imovel") || strings.Contains(alt, "imovel") ||
-			strings.Contains(src, "property") || strings.Contains(alt, "property") {
-			indicators = append(indicators, "property_images_found")
-			confidence += 0.1
-		}
-	})
+	// 5. Elementos típicos de página individual
+	individualElements := []string{
+		"*[class*='description']", "*[class*='descricao']", "*[class*='detail']",
+		"*[class*='caracteristica']", "*[class*='feature']", "*[class*='contact']",
+	}
 
-	// Determina se é página de imóvel (threshold: 0.5)
-	isPropertyPage := confidence >= 0.5
+	elementCount := 0
+	for _, selector := range individualElements {
+		e.ForEach(selector, func(_ int, el *colly.HTMLElement) {
+			elementCount++
+		})
+	}
+
+	if elementCount > 0 {
+		indicators = append(indicators, "individual_page_elements")
+		confidence += 0.1
+	}
+
+	// DECISÃO: É página individual se tem URL específica E características individuais
+	isIndividualProperty := hasIndividualURL && confidence >= 0.6
 
 	return PropertyPageDetection{
-		IsPropertyPage: isPropertyPage,
+		IsPropertyPage: isIndividualProperty,
 		Confidence:     confidence,
 		Indicators:     indicators,
 	}
@@ -432,15 +478,29 @@ func (pum *PersistentURLManager) DetectPropertyPage(e *colly.HTMLElement) Proper
 func (pum *PersistentURLManager) ShouldSkipInternalLinks(e *colly.HTMLElement) bool {
 	detection := pum.DetectPropertyPage(e)
 
-	// Se detectou que é uma página de imóvel com alta confiança, para de seguir links internos
-	if detection.IsPropertyPage && detection.Confidence >= 0.7 {
+	// APENAS para de seguir links se detectou página INDIVIDUAL de imóvel com alta confiança
+	if detection.IsPropertyPage && detection.Confidence >= 0.6 {
 		pum.logger.WithFields(map[string]interface{}{
 			"url":        e.Request.URL.String(),
 			"confidence": detection.Confidence,
 			"indicators": detection.Indicators,
-		}).Info("Property page detected - stopping internal link crawling")
+		}).Info("Individual property page detected - stopping internal link crawling")
 
 		return true
+	}
+
+	// Log para páginas de catálogo (deve continuar navegando)
+	if len(detection.Indicators) > 0 {
+		for _, indicator := range detection.Indicators {
+			if strings.Contains(indicator, "catalog") {
+				pum.logger.WithFields(map[string]interface{}{
+					"url":        e.Request.URL.String(),
+					"confidence": detection.Confidence,
+					"indicators": detection.Indicators,
+				}).Debug("Catalog page detected - continuing navigation")
+				break
+			}
+		}
 	}
 
 	return false

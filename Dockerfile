@@ -20,10 +20,11 @@ RUN apk add --no-cache ca-certificates curl
 
 WORKDIR /root/
 
-# Copy binaries and configs
+# Copy binaries, configs, and web interface
 COPY --from=builder /app/crawler .
 COPY --from=builder /app/api_bin ./api
 COPY --from=builder /app/configs ./configs
+COPY --from=builder /app/web ./web
 
 # Set default environment variables
 ENV APP_TYPE=api

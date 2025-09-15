@@ -165,6 +165,11 @@ func (ice *IncrementalCrawlerEngine) setupCollector() *colly.Collector {
 		Delay:       ice.config.DelayBetweenRequests,
 	})
 
+	// Handler para encontrar links de propriedades
+	c.OnHTML("a[href]", func(e *colly.HTMLElement) {
+		ice.handlePropertyLinks(e, c)
+	})
+
 	// Handler para páginas de propriedades
 	c.OnHTML("html", func(e *colly.HTMLElement) {
 		ice.handlePropertyPage(context.Background(), e)
@@ -436,5 +441,39 @@ func (ice *IncrementalCrawlerEngine) logFinalStatistics() {
 			"efficiency_gain": fmt.Sprintf("%.1f%%", skippedPercent),
 			"ai_savings":      stats.AISavingsEstimate,
 		}).Info("Incremental crawling efficiency gains")
+	}
+}
+
+// handlePropertyLinks processa links encontrados na página
+func (ice *IncrementalCrawlerEngine) handlePropertyLinks(e *colly.HTMLElement, c *colly.Collector) {
+	// FUNCIONALIDADE ANTI-DUPLICAÇÃO: Verifica se deve parar de seguir links internos
+	// Se detectou que é uma página de imóvel, não segue mais links para evitar duplicatas
+	if ice.urlManager.ShouldSkipInternalLinks(e) {
+		ice.logger.WithField("url", e.Request.URL.String()).Info("Skipping internal links - property page detected")
+		return
+	}
+
+	link := e.Attr("href")
+	absoluteLink := e.Request.AbsoluteURL(link)
+
+	// Normaliza a URL antes de verificar
+	absoluteLink = ice.urlManager.NormalizeURL(absoluteLink)
+
+	// Verifica se é um link válido e não visitado
+	if ice.urlManager.ShouldSkipURL(absoluteLink) || ice.urlManager.IsVisited(absoluteLink) {
+		return
+	}
+
+	// Verifica se parece ser um link de propriedade
+	if ice.urlManager.IsValidPropertyLink(absoluteLink, e.Request.URL.Host) {
+		ice.urlManager.MarkVisited(absoluteLink)
+
+		// Limita o número de URLs para evitar memory leak
+		if ice.urlManager.GetVisitedCount() > 10000 {
+			ice.urlManager.CleanupOldURLs(5000)
+		}
+
+		// Visita o link encontrado
+		c.Visit(absoluteLink)
 	}
 }

@@ -312,14 +312,14 @@ func (pum *PersistentURLManager) NormalizeURL(rawURL string) string {
 	// Remove parâmetros de query desnecessários (mantém apenas essenciais)
 	query := parsedURL.Query()
 	essentialParams := url.Values{}
-	
+
 	// Mantém apenas parâmetros que identificam o imóvel
 	for key, values := range query {
 		lowerKey := strings.ToLower(key)
-		if strings.Contains(lowerKey, "id") || 
-		   strings.Contains(lowerKey, "imovel") || 
-		   strings.Contains(lowerKey, "property") ||
-		   strings.Contains(lowerKey, "codigo") {
+		if strings.Contains(lowerKey, "id") ||
+			strings.Contains(lowerKey, "imovel") ||
+			strings.Contains(lowerKey, "property") ||
+			strings.Contains(lowerKey, "codigo") {
 			essentialParams[key] = values
 		}
 	}
@@ -346,7 +346,7 @@ func (pum *PersistentURLManager) DetectPropertyPage(e *colly.HTMLElement) Proper
 	// Verifica indicadores na URL
 	urlStr := e.Request.URL.String()
 	urlLower := strings.ToLower(urlStr)
-	
+
 	if strings.Contains(urlLower, "imovel") || strings.Contains(urlLower, "property") {
 		indicators = append(indicators, "url_contains_property_keyword")
 		confidence += 0.3
@@ -357,7 +357,7 @@ func (pum *PersistentURLManager) DetectPropertyPage(e *colly.HTMLElement) Proper
 		"*[class*='price']", "*[class*='preco']", "*[class*='valor']",
 		"*[id*='price']", "*[id*='preco']", "*[id*='valor']",
 	}
-	
+
 	for _, selector := range priceSelectors {
 		e.ForEach(selector, func(_ int, el *colly.HTMLElement) {
 			text := strings.TrimSpace(el.Text)
@@ -410,9 +410,9 @@ func (pum *PersistentURLManager) DetectPropertyPage(e *colly.HTMLElement) Proper
 	e.ForEach("img", func(_ int, el *colly.HTMLElement) {
 		src := strings.ToLower(el.Attr("src"))
 		alt := strings.ToLower(el.Attr("alt"))
-		
+
 		if strings.Contains(src, "imovel") || strings.Contains(alt, "imovel") ||
-		   strings.Contains(src, "property") || strings.Contains(alt, "property") {
+			strings.Contains(src, "property") || strings.Contains(alt, "property") {
 			indicators = append(indicators, "property_images_found")
 			confidence += 0.1
 		}
@@ -431,7 +431,7 @@ func (pum *PersistentURLManager) DetectPropertyPage(e *colly.HTMLElement) Proper
 // ShouldSkipInternalLinks determina se deve parar de seguir links internos desta página
 func (pum *PersistentURLManager) ShouldSkipInternalLinks(e *colly.HTMLElement) bool {
 	detection := pum.DetectPropertyPage(e)
-	
+
 	// Se detectou que é uma página de imóvel com alta confiança, para de seguir links internos
 	if detection.IsPropertyPage && detection.Confidence >= 0.7 {
 		pum.logger.WithFields(map[string]interface{}{
@@ -439,7 +439,7 @@ func (pum *PersistentURLManager) ShouldSkipInternalLinks(e *colly.HTMLElement) b
 			"confidence": detection.Confidence,
 			"indicators": detection.Indicators,
 		}).Info("Property page detected - stopping internal link crawling")
-		
+
 		return true
 	}
 
@@ -566,3 +566,97 @@ func (pum *PersistentURLManager) GetVisitedCount() int {
 	return len(pum.visitedURLs)
 }
 
+// ShouldSkipURL verifica se uma URL deve ser pulada (compatibilidade)
+func (pum *PersistentURLManager) ShouldSkipURL(url string) bool {
+	// Ignora links vazios
+	if url == "" {
+		return true
+	}
+
+	// Ignora links de redes sociais e contato
+	socialPatterns := []string{
+		"wa.me", "whatsapp", "mailto:", "tel:", "facebook", "instagram", "twitter",
+		"javascript:", "#", "void(0)",
+	}
+
+	urlLower := strings.ToLower(url)
+	for _, pattern := range socialPatterns {
+		if strings.Contains(urlLower, pattern) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// IsValidPropertyLink verifica se um link é válido para uma propriedade (compatibilidade)
+func (pum *PersistentURLManager) IsValidPropertyLink(link, host string) bool {
+	// Ignora links vazios
+	if link == "" {
+		return false
+	}
+
+	// Ignora links externos
+	if !strings.Contains(link, host) {
+		return false
+	}
+
+	// Ignora links de redes sociais e contato
+	socialPatterns := []string{
+		"wa.me", "whatsapp", "mailto:", "tel:", "facebook", "instagram", "twitter",
+	}
+
+	linkLower := strings.ToLower(link)
+	for _, pattern := range socialPatterns {
+		if strings.Contains(linkLower, pattern) {
+			return false
+		}
+	}
+
+	// Verifica se parece ser um link de propriedade
+	propertyPatterns := []string{
+		"detalhes", "imovel/", "propriedade/", "anuncio/",
+		"/VENDAS/", "/ALUGUEIS/", "/casa/", "/apartamento/",
+	}
+
+	for _, pattern := range propertyPatterns {
+		if strings.Contains(link, pattern) {
+			return true
+		}
+	}
+
+	// Verifica se termina com número (padrão comum para IDs de propriedades)
+	numberEndRegex := regexp.MustCompile(`/\d+/?$`)
+	if numberEndRegex.MatchString(link) {
+		return true
+	}
+
+	return false
+}
+
+// CleanupOldURLs limpa URLs antigas da memória (compatibilidade)
+func (pum *PersistentURLManager) CleanupOldURLs(maxCount int) {
+	pum.mutex.Lock()
+	defer pum.mutex.Unlock()
+
+	if len(pum.visitedURLs) <= maxCount {
+		return
+	}
+
+	// Limpa metade das URLs (estratégia simples)
+	count := 0
+	targetCount := len(pum.visitedURLs) - maxCount/2
+
+	for url := range pum.visitedURLs {
+		if count >= targetCount {
+			break
+		}
+		delete(pum.visitedURLs, url)
+		count++
+	}
+
+	pum.logger.WithFields(map[string]interface{}{
+		"cleaned_urls":   count,
+		"remaining_urls": len(pum.visitedURLs),
+	}).Info("Cleaned up old URLs from memory")
+}

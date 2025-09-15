@@ -174,7 +174,7 @@ func (ce *CrawlerEngine) handlePropertyLinks(e *colly.HTMLElement, c *colly.Coll
 	}
 
 	// Verifica se parece ser um link de propriedade
-	if ce.urlManager.isValidPropertyLink(absoluteLink, e.Request.URL.Host) {
+	if ce.urlManager.IsValidPropertyLink(absoluteLink, e.Request.URL.Host) {
 		ce.urlManager.MarkVisited(absoluteLink)
 
 		// Limita o número de URLs para evitar memory leak

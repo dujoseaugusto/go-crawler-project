@@ -55,7 +55,7 @@ func (um *URLManager) ExtractPropertyLinks(e *colly.HTMLElement) []string {
 		absoluteLink := e.Request.AbsoluteURL(href)
 
 		// Valida se é um link válido
-		if !um.isValidPropertyLink(absoluteLink, baseURL.Host) {
+		if !um.IsValidPropertyLink(absoluteLink, baseURL.Host) {
 			return
 		}
 
@@ -74,8 +74,8 @@ func (um *URLManager) ExtractPropertyLinks(e *colly.HTMLElement) []string {
 	return links
 }
 
-// isValidPropertyLink verifica se um link é válido para uma propriedade
-func (um *URLManager) isValidPropertyLink(link, host string) bool {
+// IsValidPropertyLink verifica se um link é válido para uma propriedade
+func (um *URLManager) IsValidPropertyLink(link, host string) bool {
 	// Ignora links vazios
 	if link == "" {
 		return false

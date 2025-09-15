@@ -54,9 +54,10 @@ func SetupRouter(propertyService *service.PropertyService) *gin.Engine {
 	// Endpoint de health check (sem rate limiting)
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{
-			"status":  "healthy",
-			"service": "go-crawler-api",
-			"version": "1.0.0",
+			"status":   "healthy",
+			"service":  "go-crawler-api",
+			"version":  "1.1.0",
+			"features": []string{"web-interface", "search", "crawler"},
 		})
 	})
 

@@ -1,6 +1,26 @@
 version: '3.8'
 
 services:
+  # API com Interface Web
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file: .env
+    environment:
+      - APP_TYPE=api
+      - PORT=8080
+    depends_on:
+      - db
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Crawler Worker
   crawler:
     build:
       context: .
@@ -15,21 +35,9 @@ services:
       - AI_THRESHOLD=6h
     depends_on:
       - db
-    ports:
-      - "8080:8080"
+    restart: unless-stopped
 
-  api:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    env_file: .env
-    environment:
-      - APP_TYPE=api
-    depends_on:
-      - db
-    ports:
-      - "8081:8080"
-
+  # MongoDB Local
   db:
     image: mongo:latest
     restart: always
@@ -37,6 +45,11 @@ services:
       - "27017:27017"
     volumes:
       - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
 volumes:
   mongo_data:

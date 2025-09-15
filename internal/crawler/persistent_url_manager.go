@@ -3,6 +3,7 @@ package crawler
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 	"sync"
@@ -28,6 +29,13 @@ type PersistentURLConfig struct {
 	CleanupInterval      time.Duration // Intervalo para limpeza automática
 	EnableFingerprinting bool          // Habilita fingerprinting de páginas
 	AIThreshold          time.Duration // Tempo mínimo antes de usar IA novamente
+}
+
+// PropertyPageDetection armazena informações sobre detecção de páginas de imóveis
+type PropertyPageDetection struct {
+	IsPropertyPage bool
+	Confidence     float64
+	Indicators     []string
 }
 
 // NewPersistentURLManager cria um novo gerenciador persistente de URLs
@@ -285,6 +293,157 @@ func (pum *PersistentURLManager) MarkURLProcessed(ctx context.Context, url strin
 	}
 
 	return nil
+}
+
+// NormalizeURL normaliza uma URL removendo parâmetros desnecessários e caracteres problemáticos
+func (pum *PersistentURLManager) NormalizeURL(rawURL string) string {
+	parsedURL, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL // Retorna original se não conseguir parsear
+	}
+
+	// Remove espaços codificados e outros caracteres problemáticos do path
+	path := parsedURL.Path
+	path = strings.ReplaceAll(path, "%20", "")
+	path = strings.ReplaceAll(path, "/%20/", "/")
+	path = strings.ReplaceAll(path, "//", "/")
+	path = strings.TrimSuffix(path, "/")
+
+	// Remove parâmetros de query desnecessários (mantém apenas essenciais)
+	query := parsedURL.Query()
+	essentialParams := url.Values{}
+	
+	// Mantém apenas parâmetros que identificam o imóvel
+	for key, values := range query {
+		lowerKey := strings.ToLower(key)
+		if strings.Contains(lowerKey, "id") || 
+		   strings.Contains(lowerKey, "imovel") || 
+		   strings.Contains(lowerKey, "property") ||
+		   strings.Contains(lowerKey, "codigo") {
+			essentialParams[key] = values
+		}
+	}
+
+	// Reconstrói a URL normalizada
+	normalizedURL := &url.URL{
+		Scheme: parsedURL.Scheme,
+		Host:   parsedURL.Host,
+		Path:   path,
+	}
+
+	if len(essentialParams) > 0 {
+		normalizedURL.RawQuery = essentialParams.Encode()
+	}
+
+	return normalizedURL.String()
+}
+
+// DetectPropertyPage analisa se uma página é de anúncio de imóvel
+func (pum *PersistentURLManager) DetectPropertyPage(e *colly.HTMLElement) PropertyPageDetection {
+	var indicators []string
+	confidence := 0.0
+
+	// Verifica indicadores na URL
+	urlStr := e.Request.URL.String()
+	urlLower := strings.ToLower(urlStr)
+	
+	if strings.Contains(urlLower, "imovel") || strings.Contains(urlLower, "property") {
+		indicators = append(indicators, "url_contains_property_keyword")
+		confidence += 0.3
+	}
+
+	// Verifica presença de preços
+	priceSelectors := []string{
+		"*[class*='price']", "*[class*='preco']", "*[class*='valor']",
+		"*[id*='price']", "*[id*='preco']", "*[id*='valor']",
+	}
+	
+	for _, selector := range priceSelectors {
+		e.ForEach(selector, func(_ int, el *colly.HTMLElement) {
+			text := strings.TrimSpace(el.Text)
+			if pum.looksLikePrice(text) {
+				indicators = append(indicators, "price_found")
+				confidence += 0.4
+				return
+			}
+		})
+	}
+
+	// Verifica características de imóveis
+	propertyKeywords := []string{
+		"quarto", "dormitório", "banheiro", "garagem", "área", "m²", "m2",
+		"suite", "suíte", "sala", "cozinha", "varanda", "terraço",
+	}
+
+	bodyText := strings.ToLower(e.Text)
+	keywordCount := 0
+	for _, keyword := range propertyKeywords {
+		if strings.Contains(bodyText, keyword) {
+			keywordCount++
+		}
+	}
+
+	if keywordCount >= 3 {
+		indicators = append(indicators, fmt.Sprintf("property_keywords_found_%d", keywordCount))
+		confidence += float64(keywordCount) * 0.05
+	}
+
+	// Verifica estrutura típica de página de imóvel
+	structureSelectors := []string{
+		"*[class*='caracteristica']", "*[class*='feature']", "*[class*='detail']",
+		"*[class*='info']", "*[class*='specification']",
+	}
+
+	structureCount := 0
+	for _, selector := range structureSelectors {
+		e.ForEach(selector, func(_ int, el *colly.HTMLElement) {
+			structureCount++
+		})
+	}
+
+	if structureCount > 0 {
+		indicators = append(indicators, "property_structure_found")
+		confidence += 0.2
+	}
+
+	// Verifica se tem galeria de fotos ou imagens
+	e.ForEach("img", func(_ int, el *colly.HTMLElement) {
+		src := strings.ToLower(el.Attr("src"))
+		alt := strings.ToLower(el.Attr("alt"))
+		
+		if strings.Contains(src, "imovel") || strings.Contains(alt, "imovel") ||
+		   strings.Contains(src, "property") || strings.Contains(alt, "property") {
+			indicators = append(indicators, "property_images_found")
+			confidence += 0.1
+		}
+	})
+
+	// Determina se é página de imóvel (threshold: 0.5)
+	isPropertyPage := confidence >= 0.5
+
+	return PropertyPageDetection{
+		IsPropertyPage: isPropertyPage,
+		Confidence:     confidence,
+		Indicators:     indicators,
+	}
+}
+
+// ShouldSkipInternalLinks determina se deve parar de seguir links internos desta página
+func (pum *PersistentURLManager) ShouldSkipInternalLinks(e *colly.HTMLElement) bool {
+	detection := pum.DetectPropertyPage(e)
+	
+	// Se detectou que é uma página de imóvel com alta confiança, para de seguir links internos
+	if detection.IsPropertyPage && detection.Confidence >= 0.7 {
+		pum.logger.WithFields(map[string]interface{}{
+			"url":        e.Request.URL.String(),
+			"confidence": detection.Confidence,
+			"indicators": detection.Indicators,
+		}).Info("Property page detected - stopping internal link crawling")
+		
+		return true
+	}
+
+	return false
 }
 
 // SavePageFingerprint salva o fingerprint de uma página

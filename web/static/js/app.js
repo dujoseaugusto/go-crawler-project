@@ -143,39 +143,77 @@ function displayResults(data) {
         return;
     }
     
-    const html = data.properties.map(property => createPropertyCard(property)).join('');
-    resultsContainer.innerHTML = html;
+    // Criar cards (o container já tem class="row" no HTML)
+    const cardsHtml = data.properties.map(property => createPropertyCard(property)).join('');
+    resultsContainer.innerHTML = cardsHtml;
     
     // Adicionar animação
     resultsContainer.classList.add('fade-in');
     setTimeout(() => resultsContainer.classList.remove('fade-in'), 500);
 }
 
+// Função para truncar texto
+function truncateText(text, maxLength = 150) {
+    if (!text || text.length <= maxLength) return text;
+    return text.substring(0, maxLength).trim() + '...';
+}
+
+// Função para extrair domínio da URL
+function getDomainFromUrl(url) {
+    if (!url) return '';
+    try {
+        const domain = new URL(url).hostname;
+        return domain.replace('www.', '');
+    } catch {
+        return 'Site Original';
+    }
+}
+
 // Criar card de propriedade
 function createPropertyCard(property) {
     // Formatação de valores
     const preco = formatPrice(property.valor || property.preco || 0);
-    const titulo = property.titulo || property.descricao || 'Imóvel sem título';
+    const tituloCompleto = property.titulo || property.descricao || 'Imóvel sem título';
+    const titulo = truncateText(tituloCompleto, 80);
     const endereco = property.endereco || '';
     const cidade = property.cidade || '';
     const bairro = property.bairro || '';
     const quartos = property.quartos || 0;
     const banheiros = property.banheiros || 0;
     const area = property.area_total || property.area || 0;
+    const url = property.url || '';
+    const descricao = property.descricao || '';
     
     // Localização completa
     const localizacao = [bairro, cidade].filter(Boolean).join(', ');
     
+    // Descrição truncada (se diferente do título)
+    const descricaoTruncada = descricao && descricao !== tituloCompleto ? 
+        truncateText(descricao, 120) : '';
+    
     return `
-        <div class="col-lg-4 col-md-6 mb-4">
-            <div class="card property-card h-100">
+        <div class="property-item">
+            <div class="card property-card h-100 shadow-sm">
                 <div class="property-image">
                     <i class="fas fa-home"></i>
+                    ${url ? `
+                        <div class="property-link-overlay">
+                            <a href="${url}" target="_blank" rel="noopener noreferrer" 
+                               class="btn btn-sm btn-light" title="Ver no site original">
+                                <i class="fas fa-external-link-alt"></i>
+                            </a>
+                        </div>
+                    ` : ''}
                 </div>
                 <div class="card-body d-flex flex-column">
                     <div class="property-price mb-2">${preco}</div>
-                    <h6 class="property-title">${titulo}</h6>
-                    ${endereco ? `<p class="text-muted small mb-2">${endereco}</p>` : ''}
+                    <h6 class="property-title mb-2" title="${tituloCompleto}">${titulo}</h6>
+                    
+                    ${descricaoTruncada ? `
+                        <p class="property-description text-muted small mb-2">${descricaoTruncada}</p>
+                    ` : ''}
+                    
+                    ${endereco ? `<p class="text-muted small mb-1">${truncateText(endereco, 60)}</p>` : ''}
                     ${localizacao ? `<p class="property-location mb-3">${localizacao}</p>` : ''}
                     
                     <div class="property-features mt-auto">
@@ -199,11 +237,18 @@ function createPropertyCard(property) {
                         ` : ''}
                     </div>
                     
-                    ${property.tipo_imovel ? `
-                        <div class="mt-2">
+                    <div class="mt-3 d-flex justify-content-between align-items-center">
+                        ${property.tipo_imovel ? `
                             <span class="badge bg-primary">${property.tipo_imovel}</span>
-                        </div>
-                    ` : ''}
+                        ` : '<span></span>'}
+                        
+                        ${url ? `
+                            <a href="${url}" target="_blank" rel="noopener noreferrer" 
+                               class="btn btn-outline-primary btn-sm" title="Ver no site original">
+                                <i class="fas fa-external-link-alt"></i>
+                            </a>
+                        ` : ''}
+                    </div>
                 </div>
             </div>
         </div>

@@ -274,3 +274,64 @@ func (h *PropertyHandler) TriggerCrawler(c *gin.Context) {
 	h.logger.Info("Crawler trigger response sent")
 	c.JSON(http.StatusAccepted, response)
 }
+
+// CleanupDatabase limpa o banco de dados
+func (h *PropertyHandler) CleanupDatabase(c *gin.Context) {
+	h.logger.WithFields(map[string]interface{}{
+		"client_ip": c.ClientIP(),
+		"method":    c.Request.Method,
+		"path":      c.Request.URL.Path,
+	}).Info("Database cleanup request received")
+
+	var options service.CleanupOptions
+
+	// Parse do JSON body
+	if err := c.ShouldBindJSON(&options); err != nil {
+		h.logger.WithField("error", err.Error()).Info("Invalid cleanup request body")
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Formato de requisição inválido",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	// Validação básica
+	if !options.All && !options.Properties && !options.URLs {
+		h.logger.Info("No cleanup options specified")
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Nenhuma opção de limpeza especificada",
+			"hint":    "Use 'all': true, 'properties': true, ou 'urls': true",
+		})
+		return
+	}
+
+	// Log da operação solicitada
+	h.logger.WithFields(map[string]interface{}{
+		"options": options,
+	}).Warn("Database cleanup operation requested")
+
+	// Executar limpeza
+	ctx := context.Background()
+	result := h.Service.CleanupDatabase(ctx, options)
+
+	// Determinar status HTTP
+	statusCode := http.StatusOK
+	if !result.Success {
+		statusCode = http.StatusInternalServerError
+	}
+
+	// Log do resultado
+	if result.Success {
+		h.logger.WithFields(map[string]interface{}{
+			"properties_cleared": result.PropertiesCleared,
+			"urls_cleared":       result.URLsCleared,
+			"message":            result.Message,
+		}).Info("Database cleanup completed successfully")
+	} else {
+		h.logger.WithField("error", result.Error).Info("Database cleanup failed")
+	}
+
+	c.JSON(statusCode, result)
+}

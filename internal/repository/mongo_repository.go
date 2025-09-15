@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"log"
-	"strconv"
 	"strings"
 
 	"github.com/dujoseaugusto/go-crawler-project/internal/utils"
@@ -78,15 +77,63 @@ type MongoRepository struct {
 	collection *mongo.Collection
 }
 
+// normalizeURL normaliza uma URL removendo parâmetros desnecessários e espaços
+func normalizeURL(url string) string {
+	// Remove espaços codificados e outros caracteres problemáticos
+	normalized := strings.ReplaceAll(url, "%20", "")
+	normalized = strings.ReplaceAll(normalized, "/%20/", "/")
+	normalized = strings.ReplaceAll(normalized, "//", "/")
+	
+	// Remove trailing slashes e parâmetros de query desnecessários
+	normalized = strings.TrimSuffix(normalized, "/")
+	
+	// Remove parâmetros comuns que não afetam o conteúdo
+	if idx := strings.Index(normalized, "?"); idx != -1 {
+		queryPart := normalized[idx+1:]
+		// Mantém apenas parâmetros essenciais (como ID do imóvel)
+		if !strings.Contains(queryPart, "id=") && !strings.Contains(queryPart, "imovel=") {
+			normalized = normalized[:idx]
+		}
+	}
+	
+	return strings.TrimSpace(strings.ToLower(normalized))
+}
+
+// normalizeContent normaliza conteúdo removendo caracteres especiais e espaços extras
+func normalizeContent(content string) string {
+	// Remove quebras de linha, tabs e espaços extras
+	normalized := strings.ReplaceAll(content, "\n", " ")
+	normalized = strings.ReplaceAll(normalized, "\t", " ")
+	normalized = strings.ReplaceAll(normalized, "\r", " ")
+	
+	// Remove espaços múltiplos
+	for strings.Contains(normalized, "  ") {
+		normalized = strings.ReplaceAll(normalized, "  ", " ")
+	}
+	
+	return strings.TrimSpace(strings.ToLower(normalized))
+}
+
 // GeneratePropertyHash gera um hash único baseado nas informações principais do imóvel
+// MELHORADO: Não usa URL completa, foca no conteúdo para evitar duplicatas
 func GeneratePropertyHash(property Property) string {
 	// Normaliza os dados para gerar hash consistente
-	endereco := strings.TrimSpace(strings.ToLower(property.Endereco))
-	url := strings.TrimSpace(strings.ToLower(property.URL))
-	valor := strconv.FormatFloat(property.Valor, 'f', 2, 64)
-
-	// Combina as informações principais
-	data := fmt.Sprintf("%s|%s|%s", endereco, url, valor)
+	endereco := normalizeContent(property.Endereco)
+	descricao := normalizeContent(property.Descricao)
+	cidade := normalizeContent(property.Cidade)
+	bairro := normalizeContent(property.Bairro)
+	
+	// Normaliza valor (arredonda para evitar diferenças mínimas)
+	valor := fmt.Sprintf("%.0f", property.Valor) // Remove decimais para valores grandes
+	
+	// Normaliza área
+	area := fmt.Sprintf("%.0f", property.AreaTotal)
+	
+	// Combina as informações principais (SEM URL para evitar duplicatas)
+	// Usa apenas conteúdo significativo do imóvel
+	data := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%d|%d", 
+		endereco, descricao, cidade, bairro, valor, area, 
+		property.Quartos, property.Banheiros)
 
 	// Gera hash SHA-256
 	hash := sha256.Sum256([]byte(data))
@@ -123,8 +170,26 @@ func NewMongoRepository(uri, dbName, collectionName string) (*MongoRepository, e
 }
 
 func (r *MongoRepository) Save(ctx context.Context, property Property) error {
-	// Gera hash único para o imóvel
+	// Normaliza a URL antes de salvar
+	property.URL = normalizeURL(property.URL)
+	
+	// Gera hash único para o imóvel (baseado no conteúdo, não na URL)
 	property.Hash = GeneratePropertyHash(property)
+
+	// Verifica se já existe um imóvel com o mesmo hash
+	var existingProperty Property
+	err := r.collection.FindOne(ctx, bson.M{"hash": property.Hash}).Decode(&existingProperty)
+	
+	if err == nil {
+		// Imóvel já existe - apenas atualiza a URL se for diferente (mantém a primeira encontrada)
+		if existingProperty.URL != property.URL {
+			log.Printf("Imóvel duplicado detectado - Hash: %s, URL original: %s, URL duplicada: %s", 
+				property.Hash, existingProperty.URL, property.URL)
+		}
+		return nil // Não salva duplicata
+	} else if err != mongo.ErrNoDocuments {
+		return fmt.Errorf("error checking for existing property: %v", err)
+	}
 
 	// Usa upsert para evitar duplicatas baseado no hash
 	filter := bson.M{"hash": property.Hash}
@@ -137,11 +202,9 @@ func (r *MongoRepository) Save(ctx context.Context, property Property) error {
 	}
 
 	if result.UpsertedCount > 0 {
-		log.Printf("Novo imóvel salvo com hash: %s", property.Hash)
+		log.Printf("Novo imóvel salvo - Hash: %s, URL: %s", property.Hash, property.URL)
 	} else if result.ModifiedCount > 0 {
-		log.Printf("Imóvel atualizado com hash: %s", property.Hash)
-	} else {
-		log.Printf("Imóvel já existe com hash: %s", property.Hash)
+		log.Printf("Imóvel atualizado - Hash: %s, URL: %s", property.Hash, property.URL)
 	}
 
 	return nil

@@ -49,6 +49,7 @@ func SetupRouter(propertyService *service.PropertyService) *gin.Engine {
 	crawlerGroup := r.Group("/crawler")
 	{
 		crawlerGroup.POST("/trigger", propertyHandler.TriggerCrawler)
+		crawlerGroup.POST("/cleanup", propertyHandler.CleanupDatabase)
 	}
 
 	// Endpoint de health check (sem rate limiting)

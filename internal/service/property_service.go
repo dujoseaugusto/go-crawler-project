@@ -22,6 +22,22 @@ type PropertyService struct {
 	logger  *logger.Logger
 }
 
+// CleanupOptions define as opções para limpeza do banco
+type CleanupOptions struct {
+	Properties bool `json:"properties"`
+	URLs       bool `json:"urls"`
+	All        bool `json:"all"`
+}
+
+// CleanupResult retorna o resultado da operação de limpeza
+type CleanupResult struct {
+	Success           bool   `json:"success"`
+	Message           string `json:"message"`
+	PropertiesCleared bool   `json:"properties_cleared"`
+	URLsCleared       bool   `json:"urls_cleared"`
+	Error             string `json:"error,omitempty"`
+}
+
 func NewPropertyService(repo repository.PropertyRepository, urlRepo repository.URLRepository, cfg *config.Config) *PropertyService {
 	return &PropertyService{
 		repo:    repo,
@@ -77,7 +93,7 @@ func (s *PropertyService) ForceCrawling(ctx context.Context) error {
 		CleanupInterval:      7 * 24 * time.Hour, // Limpar registros antigos a cada 7 dias
 		MaxConcurrency:       3,                  // Máximo 3 requisições simultâneas
 		DelayBetweenRequests: 2 * time.Second,    // 2s entre requisições
-		UserAgent:           "Go-Crawler-Incremental/1.0",
+		UserAgent:            "Go-Crawler-Incremental/1.0",
 	}
 
 	// Criar e iniciar o crawler incremental
@@ -92,21 +108,21 @@ func (s *PropertyService) ForceCrawling(ctx context.Context) error {
 	// Log das estatísticas finais
 	stats := engine.GetStatistics()
 	s.logger.WithFields(map[string]interface{}{
-		"total_urls":           stats.TotalURLs,
-		"processed_urls":       stats.ProcessedURLs,
-		"skipped_urls":         stats.SkippedURLs,
-		"new_properties":       stats.NewProperties,
-		"updated_properties":   stats.UpdatedProperties,
-		"failed_urls":          stats.FailedURLs,
-		"ai_processing_count":  stats.AIProcessingCount,
-		"ai_skipped_count":     stats.AISkippedCount,
-		"fingerprint_hits":     stats.FingerprintHits,
-		"fingerprint_misses":   stats.FingerprintMisses,
-		"content_changes":      stats.ContentChanges,
-		"processing_time":      stats.ProcessingTimeTotal.String(),
-		"ai_savings_estimate":  stats.AISavingsEstimate.String(),
-		"success_rate":         s.calculateSuccessRate(stats.NewProperties+stats.UpdatedProperties, stats.ProcessedURLs),
-		"skip_rate":            s.calculateSkipRate(stats.SkippedURLs, stats.TotalURLs),
+		"total_urls":          stats.TotalURLs,
+		"processed_urls":      stats.ProcessedURLs,
+		"skipped_urls":        stats.SkippedURLs,
+		"new_properties":      stats.NewProperties,
+		"updated_properties":  stats.UpdatedProperties,
+		"failed_urls":         stats.FailedURLs,
+		"ai_processing_count": stats.AIProcessingCount,
+		"ai_skipped_count":    stats.AISkippedCount,
+		"fingerprint_hits":    stats.FingerprintHits,
+		"fingerprint_misses":  stats.FingerprintMisses,
+		"content_changes":     stats.ContentChanges,
+		"processing_time":     stats.ProcessingTimeTotal.String(),
+		"ai_savings_estimate": stats.AISavingsEstimate.String(),
+		"success_rate":        s.calculateSuccessRate(stats.NewProperties+stats.UpdatedProperties, stats.ProcessedURLs),
+		"skip_rate":           s.calculateSkipRate(stats.SkippedURLs, stats.TotalURLs),
 	}).Info("Incremental crawling process completed")
 
 	// Executar limpeza de registros antigos se necessário
@@ -146,4 +162,68 @@ func (s *PropertyService) calculateSkipRate(skipped, visited int) float64 {
 		return 0
 	}
 	return float64(skipped) / float64(visited) * 100
+}
+
+// CleanupDatabase limpa o banco de dados conforme as opções especificadas
+func (s *PropertyService) CleanupDatabase(ctx context.Context, options CleanupOptions) CleanupResult {
+	result := CleanupResult{
+		Success: false,
+	}
+
+	s.logger.WithFields(map[string]interface{}{
+		"properties": options.Properties,
+		"urls":       options.URLs,
+		"all":        options.All,
+	}).Info("Iniciando limpeza do banco de dados")
+
+	// Se "all" está marcado, limpa tudo
+	if options.All {
+		options.Properties = true
+		options.URLs = true
+	}
+
+	// Limpar propriedades
+	if options.Properties {
+		if err := s.repo.ClearAll(ctx); err != nil {
+			result.Error = fmt.Sprintf("Erro ao limpar propriedades: %v", err)
+			s.logger.Error("Erro ao limpar propriedades", err)
+			return result
+		}
+		result.PropertiesCleared = true
+		s.logger.Info("Propriedades limpas com sucesso")
+	}
+
+	// Limpar URLs processadas
+	if options.URLs {
+		if mongoURLRepo, ok := s.urlRepo.(*repository.MongoURLRepository); ok {
+			// Limpa tudo (idade 0)
+			if err := mongoURLRepo.CleanupOldRecords(ctx, 0); err != nil {
+				result.Error = fmt.Sprintf("Erro ao limpar URLs: %v", err)
+				s.logger.Error("Erro ao limpar URLs", err)
+				return result
+			}
+			result.URLsCleared = true
+			s.logger.Info("URLs limpas com sucesso")
+		} else {
+			result.Error = "Repositório de URLs não suporta limpeza"
+			s.logger.WithField("type", fmt.Sprintf("%T", s.urlRepo)).Info("Repositório de URLs não é do tipo MongoURLRepository")
+			return result
+		}
+	}
+
+	// Determinar mensagem de sucesso
+	if result.PropertiesCleared && result.URLsCleared {
+		result.Message = "Banco de dados completamente limpo (propriedades + URLs)"
+	} else if result.PropertiesCleared {
+		result.Message = "Propriedades limpas com sucesso"
+	} else if result.URLsCleared {
+		result.Message = "URLs processadas limpas com sucesso"
+	} else {
+		result.Message = "Nenhuma operação de limpeza realizada"
+	}
+
+	result.Success = true
+	s.logger.WithField("message", result.Message).Info("Limpeza concluída com sucesso")
+
+	return result
 }

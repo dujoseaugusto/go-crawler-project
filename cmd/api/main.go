@@ -8,6 +8,7 @@ import (
 	"github.com/dujoseaugusto/go-crawler-project/internal/config"
 	"github.com/dujoseaugusto/go-crawler-project/internal/repository"
 	"github.com/dujoseaugusto/go-crawler-project/internal/service"
+	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 )
 
@@ -35,11 +36,38 @@ func main() {
 	}
 	defer urlRepo.Close()
 
-	// Initialize service with both repositories
-	propertyService := service.NewPropertyService(repo, urlRepo, cfg)
+	// Initialize city sites repository
+	citySitesRepo, err := repository.NewMongoCitySitesRepository(cfg.MongoURI, "crawler")
+	if err != nil {
+		log.Printf("Warning: Failed to create city sites repository: %v", err)
+		citySitesRepo = nil
+	}
+	if citySitesRepo != nil {
+		defer citySitesRepo.Close()
+	}
 
-	// Setup router
-	router := api.SetupRouter(propertyService)
+	// Initialize services
+	var propertyService *service.PropertyService
+	var citySitesService *service.CitySitesService
+
+	if citySitesRepo != nil {
+		// Use new service with city sites support
+		propertyService = service.NewPropertyServiceWithCitySites(repo, urlRepo, citySitesRepo, cfg)
+		citySitesService = service.NewCitySitesService(citySitesRepo)
+		log.Printf("City sites management enabled")
+	} else {
+		// Fallback to original service
+		propertyService = service.NewPropertyService(repo, urlRepo, cfg)
+		log.Printf("Using fallback mode without city sites management")
+	}
+
+	// Setup router with city sites support if available
+	var router *gin.Engine
+	if citySitesService != nil {
+		router = api.SetupRouterWithCitySites(propertyService, citySitesService)
+	} else {
+		router = api.SetupRouter(propertyService)
+	}
 
 	// Start server
 	log.Printf("Starting server on port %s", cfg.Port)

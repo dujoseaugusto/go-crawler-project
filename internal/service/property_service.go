@@ -16,10 +16,11 @@ import (
 )
 
 type PropertyService struct {
-	repo    repository.PropertyRepository
-	urlRepo repository.URLRepository
-	config  *config.Config
-	logger  *logger.Logger
+	repo          repository.PropertyRepository
+	urlRepo       repository.URLRepository
+	citySitesRepo repository.CitySitesRepository
+	config        *config.Config
+	logger        *logger.Logger
 }
 
 // CleanupOptions define as opções para limpeza do banco
@@ -40,10 +41,22 @@ type CleanupResult struct {
 
 func NewPropertyService(repo repository.PropertyRepository, urlRepo repository.URLRepository, cfg *config.Config) *PropertyService {
 	return &PropertyService{
-		repo:    repo,
-		urlRepo: urlRepo,
-		config:  cfg,
-		logger:  logger.NewLogger("property_service"),
+		repo:          repo,
+		urlRepo:       urlRepo,
+		citySitesRepo: nil, // Será inicializado quando necessário
+		config:        cfg,
+		logger:        logger.NewLogger("property_service"),
+	}
+}
+
+// NewPropertyServiceWithCitySites cria um PropertyService com repositório de cidades
+func NewPropertyServiceWithCitySites(repo repository.PropertyRepository, urlRepo repository.URLRepository, citySitesRepo repository.CitySitesRepository, cfg *config.Config) *PropertyService {
+	return &PropertyService{
+		repo:          repo,
+		urlRepo:       urlRepo,
+		citySitesRepo: citySitesRepo,
+		config:        cfg,
+		logger:        logger.NewLogger("property_service"),
 	}
 }
 
@@ -63,17 +76,47 @@ func (s *PropertyService) SearchProperties(ctx context.Context, filter repositor
 }
 
 // ForceCrawling inicia manualmente o processo de coleta de dados usando o sistema incremental
-func (s *PropertyService) ForceCrawling(ctx context.Context) error {
-	s.logger.Info("Starting incremental crawling process")
+func (s *PropertyService) ForceCrawling(ctx context.Context, cities []string) error {
+	s.logger.WithFields(map[string]interface{}{
+		"cities": cities,
+	}).Info("Starting incremental crawling process")
 
-	// Carrega as URLs do arquivo de configuração
-	urls, err := s.loadURLsFromFile(s.config.SitesFile)
-	if err != nil {
-		s.logger.Error("Failed to load URLs from file", err)
-		return fmt.Errorf("erro ao carregar URLs: %v", err)
+	var urls []string
+	var err error
+	var source string
+
+	// Tenta carregar URLs do repositório de cidades primeiro
+	if s.citySitesRepo != nil {
+		if len(cities) == 0 {
+			// Pega todos os sites ativos de todas as cidades
+			urls, err = s.citySitesRepo.GetAllActiveSites(ctx)
+			source = "database_all_cities"
+		} else {
+			// Pega sites apenas das cidades especificadas
+			urls, err = s.citySitesRepo.GetSitesByCities(ctx, cities)
+			source = "database_specific_cities"
+		}
+
+		if err != nil {
+			s.logger.WithError(err).Warn("Failed to load URLs from city sites repository, falling back to sites.json")
+		}
 	}
 
-	s.logger.WithField("urls_count", len(urls)).Info("URLs loaded successfully")
+	// Fallback para sites.json se não conseguiu carregar do banco ou não há sites
+	if len(urls) == 0 {
+		urls, err = s.loadURLsFromFile(s.config.SitesFile)
+		if err != nil {
+			s.logger.Error("Failed to load URLs from file", err)
+			return fmt.Errorf("erro ao carregar URLs: %v", err)
+		}
+		source = "sites_json_fallback"
+	}
+
+	s.logger.WithFields(map[string]interface{}{
+		"urls_count": len(urls),
+		"source":     source,
+		"cities":     cities,
+	}).Info("URLs loaded successfully")
 
 	// Inicializar o serviço de IA (opcional)
 	var aiService *ai.GeminiService

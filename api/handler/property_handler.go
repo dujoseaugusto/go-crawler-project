@@ -233,6 +233,12 @@ func (h *PropertyHandler) SearchProperties(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+// TriggerCrawlerRequest representa os parâmetros de trigger do crawler
+type TriggerCrawlerRequest struct {
+	Cities []string `json:"cities,omitempty"` // Lista de cidades (opcional)
+	Mode   string   `json:"mode,omitempty"`   // full, incremental
+}
+
 // TriggerCrawler força a execução do crawler para coletar dados
 func (h *PropertyHandler) TriggerCrawler(c *gin.Context) {
 	h.logger.WithFields(map[string]interface{}{
@@ -247,31 +253,65 @@ func (h *PropertyHandler) TriggerCrawler(c *gin.Context) {
 		return
 	}
 
+	// Tenta fazer bind do JSON, mas não falha se não conseguir (para compatibilidade)
+	var req TriggerCrawlerRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		// Se não conseguir fazer bind, assume valores padrão
+		req.Cities = []string{}
+		req.Mode = "incremental"
+		h.logger.WithField("bind_error", err.Error()).Debug("Using default crawler parameters")
+	}
+
+	// Valida cidades se fornecidas
+	if len(req.Cities) > 20 {
+		h.respondWithError(c, http.StatusBadRequest, "Máximo 20 cidades por requisição", nil)
+		return
+	}
+
 	// Inicia o crawler de forma assíncrona para não bloquear a resposta
 	go func() {
-		crawlerLogger := h.logger.WithField("operation", "crawler_execution")
+		crawlerLogger := h.logger.WithFields(map[string]interface{}{
+			"operation": "crawler_execution",
+			"cities":    req.Cities,
+			"mode":      req.Mode,
+		})
 		crawlerLogger.Info("Starting crawler execution")
 
 		// Cria um contexto independente para o crawler que não será cancelado
 		// quando a requisição HTTP terminar
 		ctx := context.Background()
 
-		if err := h.Service.ForceCrawling(ctx); err != nil {
+		if err := h.Service.ForceCrawling(ctx, req.Cities); err != nil {
 			crawlerLogger.Error("Error during crawler execution", err)
 		} else {
 			crawlerLogger.Info("Crawler execution completed successfully")
 		}
 	}()
 
-	response := SuccessResponse{
-		Message: "Crawler iniciado com sucesso",
-		Data: map[string]interface{}{
-			"status": "started",
-			"note":   "O processo está sendo executado em segundo plano",
-		},
+	// Prepara resposta com informações sobre o que será processado
+	responseData := map[string]interface{}{
+		"status": "started",
+		"mode":   req.Mode,
+		"note":   "O processo está sendo executado em segundo plano",
 	}
 
-	h.logger.Info("Crawler trigger response sent")
+	if len(req.Cities) > 0 {
+		responseData["cities"] = req.Cities
+		responseData["scope"] = "specific_cities"
+	} else {
+		responseData["scope"] = "all_cities"
+	}
+
+	response := SuccessResponse{
+		Message: "Crawler iniciado com sucesso",
+		Data:    responseData,
+	}
+
+	h.logger.WithFields(map[string]interface{}{
+		"cities": req.Cities,
+		"mode":   req.Mode,
+	}).Info("Crawler trigger response sent")
+
 	c.JSON(http.StatusAccepted, response)
 }
 

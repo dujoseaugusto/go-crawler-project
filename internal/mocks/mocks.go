@@ -78,9 +78,12 @@ func (m *MockURLRepository) CleanupOldRecords(maxAge string) (int64, error) {
 	return args.Get(0).(int64), args.Error(1)
 }
 
-func (m *MockURLRepository) GetStatistics() (repository.URLStats, error) {
+func (m *MockURLRepository) GetStatistics() (*repository.URLStatistics, error) {
 	args := m.Called()
-	return args.Get(0).(repository.URLStats), args.Error(1)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*repository.URLStatistics), args.Error(1)
 }
 
 func (m *MockURLRepository) Close() error {

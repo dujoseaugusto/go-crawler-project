@@ -68,77 +68,309 @@ func (e *DataExtractor) ExtractProperty(element *colly.HTMLElement, url string) 
 
 // extractAddress extrai endereço usando múltiplos seletores
 func (e *DataExtractor) extractAddress(element *colly.HTMLElement) string {
+	// Seletores mais abrangentes e específicos para sites brasileiros
 	selectors := []string{
 		".endereco", ".address", ".property-address", "[itemprop=address]",
 		"#endereco", "#address", ".street-address", ".location",
 		".imovel-endereco", ".property-location", ".address-info",
 		".property-title", ".listing-address", ".imovel-titulo",
+		".endereco-imovel", ".local", ".localizacao", ".onde",
+		"h1", "h2", "h3", // Títulos podem conter endereços
+		".titulo", ".title", ".nome-imovel", ".property-name",
+		".card-title", ".item-title", ".listing-title",
+		"[data-address]", "[data-location]", "[data-endereco]",
 	}
 
 	for _, selector := range selectors {
 		if text := strings.TrimSpace(element.ChildText(selector)); text != "" {
-			return e.cleanText(text)
+			// Verifica se parece com endereço
+			if e.looksLikeAddress(text) {
+				return e.cleanText(text)
+			}
 		}
 	}
 
-	// Fallback: procura por padrões de endereço no texto
+	// Busca em meta tags
+	metaSelectors := []string{
+		"meta[property='og:title']",
+		"meta[name='description']",
+		"meta[property='og:description']",
+	}
+	
+	for _, selector := range metaSelectors {
+		element.ForEach(selector, func(_ int, el *colly.HTMLElement) {
+			if content := el.Attr("content"); content != "" {
+				if e.looksLikeAddress(content) {
+					return
+				}
+			}
+		})
+	}
+
+	// Fallback: procura por padrões de endereço no texto completo
 	fullText := element.Text
-	addressRegex := regexp.MustCompile(`(?i)(R(?:ua|\.)\s+[\w\s]+,\s*\d+|Av(?:enida|\.)\s+[\w\s]+,\s*\d+)`)
-	if match := addressRegex.FindString(fullText); match != "" {
-		return e.cleanText(match)
+	
+	// Padrões mais abrangentes para endereços brasileiros
+	addressPatterns := []string{
+		`(?i)(R(?:ua|\.)\s+[^,\n]+,\s*\d+)`,
+		`(?i)(Av(?:enida|\.)\s+[^,\n]+,\s*\d+)`,
+		`(?i)(Pra(?:ça|\.)\s+[^,\n]+,\s*\d+)`,
+		`(?i)(Est(?:rada|\.)\s+[^,\n]+,\s*\d+)`,
+		`(?i)(Rod(?:ovia|\.)\s+[^,\n]+,\s*\d+)`,
+		`(?i)([A-Z][^,\n]+ - [A-Z]{2})`, // Cidade - Estado
+	}
+	
+	for _, pattern := range addressPatterns {
+		re := regexp.MustCompile(pattern)
+		if match := re.FindString(fullText); match != "" {
+			return e.cleanText(match)
+		}
 	}
 
 	return ""
+}
+
+// looksLikeAddress verifica se um texto parece ser um endereço
+func (e *DataExtractor) looksLikeAddress(text string) bool {
+	if len(text) < 5 || len(text) > 200 {
+		return false
+	}
+	
+	text = strings.ToLower(text)
+	
+	// Palavras que indicam endereço
+	addressWords := []string{
+		"rua", "avenida", "praça", "estrada", "rodovia", "alameda",
+		"travessa", "largo", "beco", "vila", "jardim", "centro",
+		"bairro", "distrito", "setor", "quadra", "lote",
+	}
+	
+	// Padrões que indicam endereço
+	addressPatterns := []string{
+		`\d+`, // Números
+		`-\s*mg|minas\s+gerais`, // Estado
+		`cep\s*:?\s*\d`, // CEP
+	}
+	
+	wordCount := 0
+	for _, word := range addressWords {
+		if strings.Contains(text, word) {
+			wordCount++
+		}
+	}
+	
+	patternCount := 0
+	for _, pattern := range addressPatterns {
+		if matched, _ := regexp.MatchString(pattern, text); matched {
+			patternCount++
+		}
+	}
+	
+	// Considera endereço se tem pelo menos 1 palavra indicativa OU 1 padrão
+	return wordCount >= 1 || patternCount >= 1
 }
 
 // extractPrice extrai preço usando múltiplos seletores
 func (e *DataExtractor) extractPrice(element *colly.HTMLElement) string {
+	// Seletores mais abrangentes para preços
 	selectors := []string{
 		".valor", ".price", ".property-price", "[itemprop=price]",
 		"#valor", "#price", ".value", ".amount", ".property-value",
 		".imovel-preco", ".valor-venda", ".valor-imovel",
+		".preco", ".preco-venda", ".valor-total", ".price-value",
+		".money", ".currency", ".cost", ".sale-price",
+		"[data-price]", "[data-valor]", "[data-preco]",
+		".price-container", ".valor-container", ".preco-container",
+		"strong", "b", // Preços geralmente estão em negrito
 	}
 
 	for _, selector := range selectors {
 		if text := strings.TrimSpace(element.ChildText(selector)); text != "" {
-			return e.cleanText(text)
+			if e.looksLikePrice(text) {
+				return e.cleanText(text)
+			}
 		}
 	}
 
-	// Fallback: procura por padrões de preço no texto
+	// Busca em atributos específicos
+	priceAttributes := []string{"data-price", "data-valor", "data-preco", "value"}
+	for _, attr := range priceAttributes {
+		element.ForEach("*[" + attr + "]", func(_ int, el *colly.HTMLElement) {
+			if value := el.Attr(attr); value != "" && e.looksLikePrice(value) {
+				// Encontrou preço em atributo, mas continua procurando
+			}
+		})
+	}
+
+	// Fallback: procura por padrões de preço no texto completo
 	fullText := element.Text
-	priceRegex := regexp.MustCompile(`(?i)R\$\s*[\d.,]+`)
-	if match := priceRegex.FindString(fullText); match != "" {
-		return e.cleanText(match)
+	
+	// Padrões mais específicos para valores brasileiros
+	pricePatterns := []string{
+		`(?i)R\$\s*[\d.,]+(?:\s*mil)?(?:\s*milhões?)?`,
+		`(?i)(?:valor|preço|por)\s*:?\s*R\$\s*[\d.,]+`,
+		`(?i)R\$\s*\d{1,3}(?:\.\d{3})*(?:,\d{2})?`,
+		`(?i)\d{1,3}(?:\.\d{3})*(?:,\d{2})?\s*reais?`,
+	}
+	
+	for _, pattern := range pricePatterns {
+		re := regexp.MustCompile(pattern)
+		if match := re.FindString(fullText); match != "" {
+			return e.cleanText(match)
+		}
 	}
 
 	return ""
 }
 
+// looksLikePrice verifica se um texto parece ser um preço
+func (e *DataExtractor) looksLikePrice(text string) bool {
+	if len(text) < 2 || len(text) > 50 {
+		return false
+	}
+	
+	text = strings.ToLower(text)
+	
+	// Padrões que indicam preço
+	priceIndicators := []string{
+		"r$", "real", "reais", "mil", "milhão", "milhões",
+		"valor", "preço", "preco", "venda", "à vista",
+	}
+	
+	// Deve conter números
+	hasNumbers := regexp.MustCompile(`\d`).MatchString(text)
+	if !hasNumbers {
+		return false
+	}
+	
+	// Deve conter pelo menos um indicador de preço
+	for _, indicator := range priceIndicators {
+		if strings.Contains(text, indicator) {
+			return true
+		}
+	}
+	
+	// Ou seguir padrão de valor monetário
+	monetaryPattern := regexp.MustCompile(`^\s*R?\$?\s*\d`)
+	return monetaryPattern.MatchString(text)
+}
+
 // extractDescription extrai descrição usando múltiplos seletores
 func (e *DataExtractor) extractDescription(element *colly.HTMLElement) string {
+	// Seletores mais abrangentes para descrições
 	selectors := []string{
 		".descricao", ".description", ".property-description", "[itemprop=description]",
 		"#descricao", "#description", ".details", ".features", ".property-details",
 		".imovel-descricao", ".property-text", ".property-info",
+		".content", ".texto", ".info", ".informacoes", ".detalhes",
+		".property-content", ".listing-content", ".item-content",
+		".resumo", ".summary", ".sobre", ".about",
+		"[data-description]", "[data-descricao]", "[data-content]",
+		".card-body", ".item-body", ".property-body",
 	}
 
+	// Primeiro tenta seletores específicos
 	for _, selector := range selectors {
 		if text := strings.TrimSpace(element.ChildText(selector)); text != "" {
-			return e.cleanText(text)
+			if e.looksLikeDescription(text) {
+				return e.cleanText(text)
+			}
 		}
 	}
 
-	// Fallback: coleta parágrafos que parecem ser descrição
+	// Busca em meta tags
+	metaDescription := element.ChildAttr("meta[name='description']", "content")
+	if metaDescription != "" && e.looksLikeDescription(metaDescription) {
+		return e.cleanText(metaDescription)
+	}
+
+	// Fallback: coleta parágrafos e divs que parecem ser descrição
 	var description strings.Builder
+	
+	// Primeiro tenta parágrafos
 	element.ForEach("p", func(_ int, el *colly.HTMLElement) {
 		text := strings.TrimSpace(el.Text)
-		if len(text) > 30 && len(text) < 2000 { // Aumentado de 500 para 2000 caracteres
+		if e.looksLikeDescription(text) {
 			description.WriteString(text + " ")
 		}
 	})
 
-	return e.cleanText(description.String())
+	// Se não encontrou descrição suficiente, tenta divs
+	if description.Len() < 50 {
+		element.ForEach("div", func(_ int, el *colly.HTMLElement) {
+			text := strings.TrimSpace(el.Text)
+			if e.looksLikeDescription(text) && len(text) > 30 && len(text) < 1000 {
+				description.WriteString(text + " ")
+			}
+		})
+	}
+
+	// Se ainda não tem descrição, pega texto de elementos com mais conteúdo
+	if description.Len() < 30 {
+		element.ForEach("span, td, li", func(_ int, el *colly.HTMLElement) {
+			text := strings.TrimSpace(el.Text)
+			if e.looksLikeDescription(text) && len(text) > 20 && len(text) < 500 {
+				description.WriteString(text + " ")
+			}
+		})
+	}
+
+	result := e.cleanText(description.String())
+	
+	// Limita o tamanho da descrição
+	if len(result) > 3000 {
+		result = result[:3000] + "..."
+	}
+
+	return result
+}
+
+// looksLikeDescription verifica se um texto parece ser uma descrição válida
+func (e *DataExtractor) looksLikeDescription(text string) bool {
+	if len(text) < 15 || len(text) > 5000 {
+		return false
+	}
+	
+	text = strings.ToLower(text)
+	
+	// Palavras que indicam descrição de imóvel
+	descriptiveWords := []string{
+		"casa", "apartamento", "imóvel", "propriedade", "residência",
+		"quartos", "dormitórios", "banheiros", "sala", "cozinha",
+		"garagem", "jardim", "área", "localização", "próximo",
+		"amplo", "espaçoso", "confortável", "moderno", "reformado",
+		"venda", "aluguel", "locação", "oportunidade",
+	}
+	
+	// Padrões que NÃO devem estar em descrições
+	excludePatterns := []string{
+		"copyright", "todos os direitos", "política de privacidade",
+		"termos de uso", "desenvolvido por", "powered by",
+		"javascript", "css", "html", "error", "404",
+		"menu", "navegação", "footer", "header", "sidebar",
+	}
+	
+	// Verifica se contém palavras excludentes
+	for _, pattern := range excludePatterns {
+		if strings.Contains(text, pattern) {
+			return false
+		}
+	}
+	
+	// Conta palavras descritivas
+	wordCount := 0
+	for _, word := range descriptiveWords {
+		if strings.Contains(text, word) {
+			wordCount++
+		}
+	}
+	
+	// Verifica se tem estrutura de frase (espaços e pontuação)
+	hasSpaces := strings.Contains(text, " ")
+	hasPunctuation := regexp.MustCompile(`[.,;:!?]`).MatchString(text)
+	
+	// Considera descrição se tem pelo menos 2 palavras descritivas OU estrutura de frase
+	return (wordCount >= 2) || (hasSpaces && hasPunctuation && wordCount >= 1)
 }
 
 // extractFeatures extrai características do imóvel

@@ -196,6 +196,12 @@ func (ce *CrawlerEngine) handlePropertyData(ctx context.Context, e *colly.HTMLEl
 		return
 	}
 
+	// NOVA VALIDAÇÃO: Só processa se for realmente uma página de anúncio individual
+	if !ce.urlManager.IsPropertyPage(e) {
+		ce.logger.WithField("url", url).Debug("Page is not a property page, skipping data extraction")
+		return
+	}
+
 	// Extrai dados da propriedade
 	property := ce.extractor.ExtractProperty(e, url)
 	ce.incrementPropertiesFound()

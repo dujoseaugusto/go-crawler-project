@@ -16,11 +16,12 @@ import (
 
 // PersistentURLManager gerencia URLs com persistência no banco de dados
 type PersistentURLManager struct {
-	visitedURLs map[string]bool
-	mutex       sync.RWMutex
-	logger      *logger.Logger
-	urlRepo     repository.URLRepository
-	config      PersistentURLConfig
+	visitedURLs    map[string]bool
+	mutex          sync.RWMutex
+	logger         *logger.Logger
+	urlRepo        repository.URLRepository
+	config         PersistentURLConfig
+	contentLearner *ContentBasedPatternLearner
 }
 
 // PersistentURLConfig configurações para o gerenciador de URLs
@@ -40,6 +41,11 @@ type PropertyPageDetection struct {
 
 // NewPersistentURLManager cria um novo gerenciador persistente de URLs
 func NewPersistentURLManager(urlRepo repository.URLRepository, config PersistentURLConfig) *PersistentURLManager {
+	return NewPersistentURLManagerWithContentLearner(urlRepo, config, nil)
+}
+
+// NewPersistentURLManagerWithContentLearner cria um novo gerenciador com ContentBasedPatternLearner
+func NewPersistentURLManagerWithContentLearner(urlRepo repository.URLRepository, config PersistentURLConfig, contentLearner *ContentBasedPatternLearner) *PersistentURLManager {
 	if config.MaxAge == 0 {
 		config.MaxAge = 24 * time.Hour // Padrão: 24 horas
 	}
@@ -51,10 +57,11 @@ func NewPersistentURLManager(urlRepo repository.URLRepository, config Persistent
 	}
 
 	return &PersistentURLManager{
-		visitedURLs: make(map[string]bool),
-		logger:      logger.NewLogger("persistent_url_manager"),
-		urlRepo:     urlRepo,
-		config:      config,
+		visitedURLs:    make(map[string]bool),
+		logger:         logger.NewLogger("persistent_url_manager"),
+		urlRepo:        urlRepo,
+		config:         config,
+		contentLearner: contentLearner,
 	}
 }
 
@@ -344,10 +351,47 @@ func (pum *PersistentURLManager) DetectPropertyPage(e *colly.HTMLElement) Proper
 	confidence := 0.0
 
 	urlStr := e.Request.URL.String()
+
+	// PRIMEIRO: Usa ContentBasedPatternLearner se disponível (MAIS INTELIGENTE)
+	if pum.contentLearner != nil {
+		contentType, contentConfidence := pum.contentLearner.ClassifyPageContent(e)
+
+		if contentType == "catalog" && contentConfidence > 0.1 {
+			indicators = append(indicators, "catalog_detected_by_content_analysis")
+			pum.logger.WithFields(map[string]interface{}{
+				"url":        urlStr,
+				"confidence": contentConfidence,
+				"method":     "content_analysis",
+			}).Info("CATALOG page detected by CONTENT ANALYSIS - NOT a property page")
+
+			return PropertyPageDetection{
+				IsPropertyPage: false,
+				Confidence:     0.0,
+				Indicators:     indicators,
+			}
+		}
+
+		if contentType == "property" && contentConfidence > 0.1 {
+			indicators = append(indicators, "property_detected_by_content_analysis")
+			pum.logger.WithFields(map[string]interface{}{
+				"url":        urlStr,
+				"confidence": contentConfidence,
+				"method":     "content_analysis",
+			}).Info("PROPERTY page detected by CONTENT ANALYSIS")
+
+			return PropertyPageDetection{
+				IsPropertyPage: true,
+				Confidence:     contentConfidence,
+				Indicators:     indicators,
+			}
+		}
+	}
+
+	// SEGUNDO: Fallback para análise tradicional
 	urlLower := strings.ToLower(urlStr)
 	bodyText := strings.ToLower(e.Text)
 
-	// PRIMEIRO: Verifica se é página de CATÁLOGO/LISTAGEM (deve CONTINUAR navegando)
+	// Verifica se é página de CATÁLOGO/LISTAGEM (deve CONTINUAR navegando)
 	catalogIndicators := []string{
 		"imoveis/?", "busca", "listagem", "catalogo", "pesquisa", "resultados",
 		"filtros", "ordenar", "pagina=", "page=", "/imoveis", "/properties",
@@ -366,7 +410,7 @@ func (pum *PersistentURLManager) DetectPropertyPage(e *colly.HTMLElement) Proper
 
 	// Se parece ser catálogo, NÃO é página individual
 	if catalogCount > 0 && (priceCount > 5 || roomCount > 3) {
-		indicators = append(indicators, "catalog_page_detected")
+		indicators = append(indicators, "catalog_page_detected_by_traditional_analysis")
 		return PropertyPageDetection{
 			IsPropertyPage: false,
 			Confidence:     0.0,

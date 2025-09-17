@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/dujoseaugusto/go-crawler-project/internal/config"
 	"github.com/dujoseaugusto/go-crawler-project/internal/logger"
@@ -40,25 +41,96 @@ func (m *MockPropertyRepository) Close() {
 	m.Called()
 }
 
+// Mock URLRepository
+type MockURLRepository struct {
+	mock.Mock
+}
+
+func (m *MockURLRepository) SaveProcessedURL(ctx context.Context, url repository.ProcessedURL) error {
+	args := m.Called(ctx, url)
+	return args.Error(0)
+}
+
+func (m *MockURLRepository) GetProcessedURL(ctx context.Context, url string) (*repository.ProcessedURL, error) {
+	args := m.Called(ctx, url)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*repository.ProcessedURL), args.Error(1)
+}
+
+func (m *MockURLRepository) GetProcessedURLsSince(ctx context.Context, since time.Time) ([]repository.ProcessedURL, error) {
+	args := m.Called(ctx, since)
+	return args.Get(0).([]repository.ProcessedURL), args.Error(1)
+}
+
+func (m *MockURLRepository) IsURLProcessedRecently(ctx context.Context, url string, maxAge time.Duration) (bool, error) {
+	args := m.Called(ctx, url, maxAge)
+	return args.Bool(0), args.Error(1)
+}
+
+func (m *MockURLRepository) SaveFingerprint(ctx context.Context, fingerprint repository.PageFingerprint) error {
+	args := m.Called(ctx, fingerprint)
+	return args.Error(0)
+}
+
+func (m *MockURLRepository) GetFingerprint(ctx context.Context, url string) (*repository.PageFingerprint, error) {
+	args := m.Called(ctx, url)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*repository.PageFingerprint), args.Error(1)
+}
+
+func (m *MockURLRepository) UpdateFingerprint(ctx context.Context, fingerprint repository.PageFingerprint) error {
+	args := m.Called(ctx, fingerprint)
+	return args.Error(0)
+}
+
+func (m *MockURLRepository) GetFingerprintsRequiringUpdate(ctx context.Context, maxAge time.Duration) ([]repository.PageFingerprint, error) {
+	args := m.Called(ctx, maxAge)
+	return args.Get(0).([]repository.PageFingerprint), args.Error(1)
+}
+
+func (m *MockURLRepository) CleanupOldRecords(ctx context.Context, maxAge time.Duration) error {
+	args := m.Called(ctx, maxAge)
+	return args.Error(0)
+}
+
+func (m *MockURLRepository) GetStatistics(ctx context.Context) (*repository.URLStatistics, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*repository.URLStatistics), args.Error(1)
+}
+
+func (m *MockURLRepository) Close() {
+	m.Called()
+}
+
 // Test setup
-func setupTestService() (*PropertyService, *MockPropertyRepository) {
+func setupTestService() (*PropertyService, *MockPropertyRepository, *MockURLRepository) {
 	mockRepo := &MockPropertyRepository{}
+	mockURLRepo := &MockURLRepository{}
 	testConfig := &config.Config{}
 
 	service := &PropertyService{
-		repo:   mockRepo,
-		config: testConfig,
-		logger: logger.NewLogger("test"),
+		repo:    mockRepo,
+		urlRepo: mockURLRepo,
+		config:  testConfig,
+		logger:  logger.NewLogger("test"),
 	}
 
-	return service, mockRepo
+	return service, mockRepo, mockURLRepo
 }
 
 func TestNewPropertyService(t *testing.T) {
 	mockRepo := &MockPropertyRepository{}
+	mockURLRepo := &MockURLRepository{}
 	testConfig := &config.Config{}
 
-	service := NewPropertyService(mockRepo, testConfig)
+	service := NewPropertyService(mockRepo, mockURLRepo, testConfig)
 
 	assert.NotNil(t, service)
 	assert.Equal(t, mockRepo, service.repo)
@@ -67,7 +139,7 @@ func TestNewPropertyService(t *testing.T) {
 }
 
 func TestSaveProperty_Success(t *testing.T) {
-	service, mockRepo := setupTestService()
+	service, mockRepo, _ := setupTestService()
 	ctx := context.Background()
 
 	property := repository.Property{
@@ -86,7 +158,7 @@ func TestSaveProperty_Success(t *testing.T) {
 }
 
 func TestSaveProperty_EmptyFields(t *testing.T) {
-	service, _ := setupTestService()
+	service, _, _ := setupTestService()
 	ctx := context.Background()
 
 	tests := []struct {
@@ -129,7 +201,7 @@ func TestSaveProperty_EmptyFields(t *testing.T) {
 }
 
 func TestGetAllProperties_Success(t *testing.T) {
-	service, mockRepo := setupTestService()
+	service, mockRepo, _ := setupTestService()
 	ctx := context.Background()
 
 	expectedProperties := []repository.Property{
@@ -157,7 +229,7 @@ func TestGetAllProperties_Success(t *testing.T) {
 }
 
 func TestSearchProperties_Success(t *testing.T) {
-	service, mockRepo := setupTestService()
+	service, mockRepo, _ := setupTestService()
 	ctx := context.Background()
 
 	filter := repository.PropertyFilter{
@@ -195,7 +267,7 @@ func TestSearchProperties_Success(t *testing.T) {
 
 // Benchmark tests
 func BenchmarkSaveProperty(b *testing.B) {
-	service, mockRepo := setupTestService()
+	service, mockRepo, _ := setupTestService()
 	ctx := context.Background()
 
 	property := repository.Property{
@@ -214,7 +286,7 @@ func BenchmarkSaveProperty(b *testing.B) {
 }
 
 func BenchmarkGetAllProperties(b *testing.B) {
-	service, mockRepo := setupTestService()
+	service, mockRepo, _ := setupTestService()
 	ctx := context.Background()
 
 	properties := make([]repository.Property, 1000)

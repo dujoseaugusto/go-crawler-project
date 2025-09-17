@@ -25,7 +25,7 @@ type URLRepositoryInterface interface {
 	FindByURL(url string) (*repository.ProcessedURL, error)
 	LoadAll() ([]repository.ProcessedURL, error)
 	CleanupOldRecords(maxAge string) (int64, error)
-	GetStatistics() (repository.URLStats, error)
+	GetStatistics() (*repository.URLStatistics, error)
 	Close() error
 }
 

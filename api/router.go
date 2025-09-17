@@ -5,6 +5,7 @@ import (
 
 	"github.com/dujoseaugusto/go-crawler-project/api/handler"
 	"github.com/dujoseaugusto/go-crawler-project/api/middleware"
+	"github.com/dujoseaugusto/go-crawler-project/internal/crawler"
 	"github.com/dujoseaugusto/go-crawler-project/internal/service"
 	"github.com/gin-gonic/gin"
 )
@@ -14,6 +15,14 @@ func SetupRouter(propertyService *service.PropertyService) *gin.Engine {
 }
 
 func SetupRouterWithCitySites(propertyService *service.PropertyService, citySitesService *service.CitySitesService) *gin.Engine {
+	return SetupRouterWithPatternLearning(propertyService, citySitesService, nil)
+}
+
+func SetupRouterWithPatternLearning(propertyService *service.PropertyService, citySitesService *service.CitySitesService, patternLearner *crawler.PatternLearner) *gin.Engine {
+	return SetupRouterWithContentLearning(propertyService, citySitesService, patternLearner, nil)
+}
+
+func SetupRouterWithContentLearning(propertyService *service.PropertyService, citySitesService *service.CitySitesService, patternLearner *crawler.PatternLearner, contentLearner *crawler.ContentBasedPatternLearner) *gin.Engine {
 	r := gin.Default()
 
 	// Configurar rate limiting
@@ -29,6 +38,16 @@ func SetupRouterWithCitySites(propertyService *service.PropertyService, citySite
 	var citySitesHandler *handler.CitySitesHandler
 	if citySitesService != nil {
 		citySitesHandler = handler.NewCitySitesHandler(citySitesService)
+	}
+
+	var patternLearningHandler *handler.PatternLearningHandler
+	if patternLearner != nil {
+		patternLearningHandler = handler.NewPatternLearningHandler(patternLearner)
+	}
+
+	var contentLearningHandler *handler.ContentLearningHandler
+	if contentLearner != nil {
+		contentLearningHandler = handler.NewContentLearningHandler(contentLearner)
 	}
 
 	// Aplicar middlewares
@@ -92,11 +111,51 @@ func SetupRouterWithCitySites(propertyService *service.PropertyService, citySite
 		}
 	}
 
+	// Endpoints de aprendizado de padrões (apenas se o serviço estiver disponível)
+	if patternLearningHandler != nil {
+		patternsGroup := r.Group("/patterns")
+		{
+			// Aprendizado baseado em URL (método antigo)
+			patternsGroup.POST("/learn/catalog", patternLearningHandler.LearnCatalogURLs)
+			patternsGroup.POST("/learn/property", patternLearningHandler.LearnPropertyURLs)
+
+			// Classificação baseada em URL
+			patternsGroup.POST("/classify", patternLearningHandler.ClassifyURL)
+
+			// Gerenciamento de padrões
+			patternsGroup.GET("", patternLearningHandler.GetLearnedPatterns)
+			patternsGroup.GET("/export", patternLearningHandler.ExportPatterns)
+			patternsGroup.POST("/import", patternLearningHandler.ImportPatterns)
+		}
+	}
+
+	// Endpoints de aprendizado baseado em conteúdo (novo método inteligente)
+	if contentLearningHandler != nil {
+		contentGroup := r.Group("/content")
+		{
+			// Aprendizado baseado em conteúdo da página
+			contentGroup.POST("/learn/catalog", contentLearningHandler.LearnCatalogPages)
+			contentGroup.POST("/learn/property", contentLearningHandler.LearnPropertyPages)
+
+			// Classificação baseada em conteúdo
+			contentGroup.POST("/classify", contentLearningHandler.ClassifyPage)
+
+			// Gerenciamento de padrões de conteúdo
+			contentGroup.GET("/patterns", contentLearningHandler.GetLearnedPatterns)
+		}
+	}
+
 	// Endpoint de health check (sem rate limiting)
 	r.GET("/health", func(c *gin.Context) {
 		features := []string{"web-interface", "search", "crawler"}
 		if citySitesHandler != nil {
 			features = append(features, "city-sites-management", "site-discovery")
+		}
+		if patternLearningHandler != nil {
+			features = append(features, "pattern-learning", "url-classification")
+		}
+		if contentLearningHandler != nil {
+			features = append(features, "content-learning", "intelligent-classification")
 		}
 
 		c.JSON(200, gin.H{

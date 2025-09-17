@@ -63,6 +63,28 @@ func NewIncrementalCrawlerEngine(
 	aiService *ai.GeminiService,
 	config IncrementalConfig,
 ) *IncrementalCrawlerEngine {
+	return NewIncrementalCrawlerEngineWithPatternLearner(propertyRepo, urlRepo, aiService, config, nil)
+}
+
+// NewIncrementalCrawlerEngineWithPatternLearner cria um novo engine com PatternLearner
+func NewIncrementalCrawlerEngineWithPatternLearner(
+	propertyRepo repository.PropertyRepository,
+	urlRepo repository.URLRepository,
+	aiService *ai.GeminiService,
+	config IncrementalConfig,
+	patternLearner *PatternLearner,
+) *IncrementalCrawlerEngine {
+	return NewIncrementalCrawlerEngineWithContentLearner(propertyRepo, urlRepo, aiService, config, nil)
+}
+
+// NewIncrementalCrawlerEngineWithContentLearner cria um novo engine com ContentBasedPatternLearner
+func NewIncrementalCrawlerEngineWithContentLearner(
+	propertyRepo repository.PropertyRepository,
+	urlRepo repository.URLRepository,
+	aiService *ai.GeminiService,
+	config IncrementalConfig,
+	contentLearner *ContentBasedPatternLearner,
+) *IncrementalCrawlerEngine {
 	// Configurações padrão
 	if config.MaxAge == 0 {
 		config.MaxAge = 24 * time.Hour
@@ -91,13 +113,21 @@ func NewIncrementalCrawlerEngine(
 		AIThreshold:          config.AIThreshold,
 	}
 
+	// Cria URL Manager com ContentLearner se disponível
+	var urlManager *PersistentURLManager
+	if contentLearner != nil {
+		urlManager = NewPersistentURLManagerWithContentLearner(urlRepo, urlManagerConfig, contentLearner)
+	} else {
+		urlManager = NewPersistentURLManager(urlRepo, urlManagerConfig)
+	}
+
 	return &IncrementalCrawlerEngine{
 		repository: propertyRepo,
 		urlRepo:    urlRepo,
 		aiService:  aiService,
 		extractor:  NewDataExtractor(),
 		validator:  NewPropertyValidator(),
-		urlManager: NewPersistentURLManager(urlRepo, urlManagerConfig),
+		urlManager: urlManager,
 		logger:     logger.NewLogger("incremental_crawler"),
 		config:     config,
 		stats:      &IncrementalStats{},

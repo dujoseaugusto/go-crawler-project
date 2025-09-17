@@ -6,9 +6,9 @@ import (
 
 	"github.com/dujoseaugusto/go-crawler-project/api"
 	"github.com/dujoseaugusto/go-crawler-project/internal/config"
+	"github.com/dujoseaugusto/go-crawler-project/internal/crawler"
 	"github.com/dujoseaugusto/go-crawler-project/internal/repository"
 	"github.com/dujoseaugusto/go-crawler-project/internal/service"
-	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 )
 
@@ -46,6 +46,14 @@ func main() {
 		defer citySitesRepo.Close()
 	}
 
+	// Initialize pattern learner (URL-based - legacy)
+	patternLearner := crawler.NewPatternLearner()
+	log.Printf("URL-based pattern learning system initialized")
+
+	// Initialize content-based pattern learner (SHARED INSTANCE with persistence)
+	contentLearner := crawler.GetSharedContentLearner()
+	log.Printf("Content-based pattern learning system initialized (SHARED INSTANCE with persistence)")
+
 	// Initialize services
 	var propertyService *service.PropertyService
 	var citySitesService *service.CitySitesService
@@ -61,13 +69,16 @@ func main() {
 		log.Printf("Using fallback mode without city sites management")
 	}
 
-	// Setup router with city sites support if available
-	var router *gin.Engine
-	if citySitesService != nil {
-		router = api.SetupRouterWithCitySites(propertyService, citySitesService)
-	} else {
-		router = api.SetupRouter(propertyService)
-	}
+	// Conecta o PatternLearner ao PropertyService
+	propertyService.SetPatternLearner(patternLearner)
+	log.Printf("PatternLearner connected to PropertyService")
+
+	// Conecta o ContentBasedPatternLearner ao PropertyService
+	propertyService.SetContentLearner(contentLearner)
+	log.Printf("ContentBasedPatternLearner connected to PropertyService")
+
+	// Setup router with all available features
+	router := api.SetupRouterWithContentLearning(propertyService, citySitesService, patternLearner, contentLearner)
 
 	// Start server
 	log.Printf("Starting server on port %s", cfg.Port)

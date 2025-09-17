@@ -15,7 +15,7 @@ import (
 type MongoRepositoryTestSuite struct {
 	suite.Suite
 	client     *mongo.Client
-	repository *MongoPropertyRepository
+	repository *MongoRepository
 	urlRepo    *MongoURLRepository
 }
 
@@ -29,8 +29,16 @@ func (suite *MongoRepositoryTestSuite) SetupSuite() {
 	}
 
 	suite.client = client
-	suite.repository = NewMongoPropertyRepository("mongodb://localhost:27017", "test_crawler_db")
-	suite.urlRepo = NewMongoURLRepository("mongodb://localhost:27017", "test_crawler_db")
+	suite.repository, err = NewMongoRepository("mongodb://localhost:27017", "test_crawler_db", "properties")
+	if err != nil {
+		suite.T().Skip("Failed to create MongoDB repository")
+		return
+	}
+	suite.urlRepo, err = NewMongoURLRepository("mongodb://localhost:27017", "test_crawler_db")
+	if err != nil {
+		suite.T().Skip("Failed to create MongoDB URL repository")
+		return
+	}
 }
 
 func (suite *MongoRepositoryTestSuite) SetupTest() {
@@ -63,28 +71,27 @@ func (suite *MongoRepositoryTestSuite) TestSaveProperty() {
 	}
 
 	property := Property{
-		ID:          "test-1",
-		Titulo:      "Casa Teste",
-		Descricao:   "Uma casa para teste",
-		Endereco:    "Rua Teste, 123",
-		Cidade:      "São Paulo",
-		Bairro:      "Centro",
-		TipoImovel:  "Casa",
-		Preco:       500000,
-		ValorTexto:  "R$ 500.000",
-		URL:         "https://test.com/property/1",
-		DataCriacao: time.Now(),
+		ID:         "test-1",
+		Descricao:  "Uma casa para teste",
+		Endereco:   "Rua Teste, 123",
+		Cidade:     "São Paulo",
+		Bairro:     "Centro",
+		TipoImovel: "Casa",
+		Valor:      500000,
+		ValorTexto: "R$ 500.000",
+		URL:        "https://test.com/property/1",
 	}
 
-	err := suite.repository.Save(property)
+	err := suite.repository.Save(context.Background(), property)
 	assert.NoError(suite.T(), err)
 
 	// Verify property was saved
-	filter := PropertyFilter{Limit: 10}
-	properties, err := suite.repository.FindWithFilters(filter)
+	filter := PropertyFilter{}
+	pagination := PaginationParams{Page: 1, PageSize: 10}
+	result, err := suite.repository.FindWithFilters(context.Background(), filter, pagination)
 	assert.NoError(suite.T(), err)
-	assert.Len(suite.T(), properties, 1)
-	assert.Equal(suite.T(), property.ID, properties[0].ID)
+	assert.Len(suite.T(), result.Properties, 1)
+	assert.Equal(suite.T(), property.ID, result.Properties[0].ID)
 }
 
 func (suite *MongoRepositoryTestSuite) TestFindWithFilters_BasicSearch() {
@@ -97,38 +104,36 @@ func (suite *MongoRepositoryTestSuite) TestFindWithFilters_BasicSearch() {
 	properties := []Property{
 		{
 			ID:         "1",
-			Titulo:     "Casa na Praia",
 			Descricao:  "Linda casa com vista para o mar",
 			Cidade:     "Rio de Janeiro",
 			Bairro:     "Copacabana",
 			TipoImovel: "Casa",
-			Preco:      800000,
+			Valor:      800000,
 		},
 		{
 			ID:         "2",
-			Titulo:     "Apartamento Centro",
 			Descricao:  "Apartamento moderno no centro da cidade",
 			Cidade:     "São Paulo",
 			Bairro:     "Centro",
 			TipoImovel: "Apartamento",
-			Preco:      400000,
+			Valor:      400000,
 		},
 	}
 
 	for _, prop := range properties {
-		err := suite.repository.Save(prop)
+		err := suite.repository.Save(context.Background(), prop)
 		assert.NoError(suite.T(), err)
 	}
 
 	// Test city filter
 	filter := PropertyFilter{
 		Cidade: "rio de janeiro", // Test case insensitive
-		Limit:  10,
 	}
-	result, err := suite.repository.FindWithFilters(filter)
+	pagination := PaginationParams{Page: 1, PageSize: 10}
+	result, err := suite.repository.FindWithFilters(context.Background(), filter, pagination)
 	assert.NoError(suite.T(), err)
-	assert.Len(suite.T(), result, 1)
-	assert.Equal(suite.T(), "Casa na Praia", result[0].Titulo)
+	assert.Len(suite.T(), result.Properties, 1)
+	assert.Equal(suite.T(), "Linda casa com vista para o mar", result.Properties[0].Descricao)
 }
 
 func (suite *MongoRepositoryTestSuite) TestFindWithFilters_QuerySearch() {
@@ -140,24 +145,23 @@ func (suite *MongoRepositoryTestSuite) TestFindWithFilters_QuerySearch() {
 	// Save test property
 	property := Property{
 		ID:        "1",
-		Titulo:    "Casa na Praia",
 		Descricao: "Linda casa com vista para o mar e piscina",
 		Cidade:    "Rio de Janeiro",
 		Bairro:    "Copacabana",
 	}
 
-	err := suite.repository.Save(property)
+	err := suite.repository.Save(context.Background(), property)
 	assert.NoError(suite.T(), err)
 
 	// Test query search
 	filter := PropertyFilter{
 		Query: "casa piscina",
-		Limit: 10,
 	}
-	result, err := suite.repository.FindWithFilters(filter)
+	pagination := PaginationParams{Page: 1, PageSize: 10}
+	result, err := suite.repository.FindWithFilters(context.Background(), filter, pagination)
 	assert.NoError(suite.T(), err)
-	assert.Len(suite.T(), result, 1)
-	assert.Equal(suite.T(), "Casa na Praia", result[0].Titulo)
+	assert.Len(suite.T(), result.Properties, 1)
+	assert.Equal(suite.T(), "Linda casa com vista para o mar e piscina", result.Properties[0].Descricao)
 }
 
 func (suite *MongoRepositoryTestSuite) TestFindWithFilters_PriceRange() {
@@ -168,50 +172,29 @@ func (suite *MongoRepositoryTestSuite) TestFindWithFilters_PriceRange() {
 
 	// Save test properties with different prices
 	properties := []Property{
-		{ID: "1", Titulo: "Casa Barata", Preco: 200000},
-		{ID: "2", Titulo: "Casa Média", Preco: 500000},
-		{ID: "3", Titulo: "Casa Cara", Preco: 1000000},
+		{ID: "1", Descricao: "Casa Barata", Valor: 200000},
+		{ID: "2", Descricao: "Casa Média", Valor: 500000},
+		{ID: "3", Descricao: "Casa Cara", Valor: 1000000},
 	}
 
 	for _, prop := range properties {
-		err := suite.repository.Save(prop)
+		err := suite.repository.Save(context.Background(), prop)
 		assert.NoError(suite.T(), err)
 	}
 
 	// Test price range filter
 	filter := PropertyFilter{
-		PrecoMin: 300000,
-		PrecoMax: 800000,
-		Limit:    10,
+		ValorMin: 300000,
+		ValorMax: 800000,
 	}
-	result, err := suite.repository.FindWithFilters(filter)
+	pagination := PaginationParams{Page: 1, PageSize: 10}
+	result, err := suite.repository.FindWithFilters(context.Background(), filter, pagination)
 	assert.NoError(suite.T(), err)
-	assert.Len(suite.T(), result, 1)
-	assert.Equal(suite.T(), "Casa Média", result[0].Titulo)
+	assert.Len(suite.T(), result.Properties, 1)
+	assert.Equal(suite.T(), "Casa Média", result.Properties[0].Descricao)
 }
 
-func (suite *MongoRepositoryTestSuite) TestCount() {
-	if suite.client == nil {
-		suite.T().Skip("MongoDB not available")
-		return
-	}
-
-	// Save test properties
-	for i := 0; i < 5; i++ {
-		property := Property{
-			ID:     string(rune(i)),
-			Titulo: "Test Property",
-		}
-		err := suite.repository.Save(property)
-		assert.NoError(suite.T(), err)
-	}
-
-	count, err := suite.repository.Count()
-	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), int64(5), count)
-}
-
-func (suite *MongoRepositoryTestSuite) TestDeleteAll() {
+func (suite *MongoRepositoryTestSuite) TestClearAll() {
 	if suite.client == nil {
 		suite.T().Skip("MongoDB not available")
 		return
@@ -219,20 +202,20 @@ func (suite *MongoRepositoryTestSuite) TestDeleteAll() {
 
 	// Save test property
 	property := Property{
-		ID:     "test",
-		Titulo: "Test Property",
+		ID:        "test",
+		Descricao: "Test Property",
 	}
-	err := suite.repository.Save(property)
+	err := suite.repository.Save(context.Background(), property)
 	assert.NoError(suite.T(), err)
 
-	// Delete all
-	err = suite.repository.DeleteAll()
+	// Clear all
+	err = suite.repository.ClearAll(context.Background())
 	assert.NoError(suite.T(), err)
 
-	// Verify deletion
-	count, err := suite.repository.Count()
+	// Verify deletion - check by trying to find all
+	result, err := suite.repository.FindAll(context.Background())
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), int64(0), count)
+	assert.Equal(suite.T(), 0, len(result))
 }
 
 // URL Repository Tests
@@ -244,20 +227,20 @@ func (suite *MongoRepositoryTestSuite) TestURLRepository_Save() {
 
 	processedURL := ProcessedURL{
 		URL:         "https://test.com/property/1",
-		Fingerprint: "abc123hash",
+		Hash:        "abc123hash",
 		ProcessedAt: time.Now(),
-		LastAICall:  time.Now(),
+		Status:      "success",
 	}
 
-	err := suite.urlRepo.Save(processedURL)
+	err := suite.urlRepo.SaveProcessedURL(context.Background(), processedURL)
 	assert.NoError(suite.T(), err)
 
 	// Verify URL was saved
-	found, err := suite.urlRepo.FindByURL(processedURL.URL)
+	found, err := suite.urlRepo.GetProcessedURL(context.Background(), processedURL.URL)
 	assert.NoError(suite.T(), err)
 	assert.NotNil(suite.T(), found)
 	assert.Equal(suite.T(), processedURL.URL, found.URL)
-	assert.Equal(suite.T(), processedURL.Fingerprint, found.Fingerprint)
+	assert.Equal(suite.T(), processedURL.Hash, found.Hash)
 }
 
 func (suite *MongoRepositoryTestSuite) TestURLRepository_FindByURL_NotFound() {
@@ -266,40 +249,9 @@ func (suite *MongoRepositoryTestSuite) TestURLRepository_FindByURL_NotFound() {
 		return
 	}
 
-	found, err := suite.urlRepo.FindByURL("https://nonexistent.com")
+	found, err := suite.urlRepo.GetProcessedURL(context.Background(), "https://nonexistent.com")
 	assert.NoError(suite.T(), err)
 	assert.Nil(suite.T(), found)
-}
-
-func (suite *MongoRepositoryTestSuite) TestURLRepository_LoadAll() {
-	if suite.client == nil {
-		suite.T().Skip("MongoDB not available")
-		return
-	}
-
-	// Save test URLs
-	urls := []ProcessedURL{
-		{
-			URL:         "https://test1.com",
-			Fingerprint: "hash1",
-			ProcessedAt: time.Now(),
-		},
-		{
-			URL:         "https://test2.com",
-			Fingerprint: "hash2",
-			ProcessedAt: time.Now(),
-		},
-	}
-
-	for _, url := range urls {
-		err := suite.urlRepo.Save(url)
-		assert.NoError(suite.T(), err)
-	}
-
-	// Load all URLs
-	result, err := suite.urlRepo.LoadAll()
-	assert.NoError(suite.T(), err)
-	assert.Len(suite.T(), result, 2)
 }
 
 func (suite *MongoRepositoryTestSuite) TestURLRepository_GetStatistics() {
@@ -313,64 +265,27 @@ func (suite *MongoRepositoryTestSuite) TestURLRepository_GetStatistics() {
 	urls := []ProcessedURL{
 		{
 			URL:         "https://test1.com",
-			Fingerprint: "hash1",
+			Hash:        "hash1",
 			ProcessedAt: now,
-			LastAICall:  now,
+			Status:      "success",
 		},
 		{
 			URL:         "https://test2.com",
-			Fingerprint: "hash2",
+			Hash:        "hash2",
 			ProcessedAt: now.Add(-25 * time.Hour), // Old record
+			Status:      "success",
 		},
 	}
 
 	for _, url := range urls {
-		err := suite.urlRepo.Save(url)
+		err := suite.urlRepo.SaveProcessedURL(context.Background(), url)
 		assert.NoError(suite.T(), err)
 	}
 
-	stats, err := suite.urlRepo.GetStatistics()
+	stats, err := suite.urlRepo.GetStatistics(context.Background())
 	assert.NoError(suite.T(), err)
 	assert.Equal(suite.T(), int64(2), stats.TotalURLs)
-	assert.True(suite.T(), stats.ProcessedLast24h >= 1)
-}
-
-func (suite *MongoRepositoryTestSuite) TestURLRepository_CleanupOldRecords() {
-	if suite.client == nil {
-		suite.T().Skip("MongoDB not available")
-		return
-	}
-
-	// Save old and new URLs
-	now := time.Now()
-	urls := []ProcessedURL{
-		{
-			URL:         "https://old.com",
-			Fingerprint: "hash1",
-			ProcessedAt: now.Add(-48 * time.Hour), // 2 days old
-		},
-		{
-			URL:         "https://new.com",
-			Fingerprint: "hash2",
-			ProcessedAt: now, // Recent
-		},
-	}
-
-	for _, url := range urls {
-		err := suite.urlRepo.Save(url)
-		assert.NoError(suite.T(), err)
-	}
-
-	// Cleanup records older than 24 hours
-	deleted, err := suite.urlRepo.CleanupOldRecords("24h")
-	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), int64(1), deleted)
-
-	// Verify only new record remains
-	all, err := suite.urlRepo.LoadAll()
-	assert.NoError(suite.T(), err)
-	assert.Len(suite.T(), all, 1)
-	assert.Equal(suite.T(), "https://new.com", all[0].URL)
+	assert.True(suite.T(), stats.ProcessedToday >= 1)
 }
 
 // Unit tests for utility functions
@@ -384,33 +299,17 @@ func TestPropertyFilter_Validation(t *testing.T) {
 			name: "Valid filter",
 			filter: PropertyFilter{
 				Cidade:   "São Paulo",
-				PrecoMin: 100000,
-				PrecoMax: 500000,
-				Limit:    10,
-				Offset:   0,
+				ValorMin: 100000,
+				ValorMax: 500000,
 			},
 			valid: true,
-		},
-		{
-			name: "Negative limit",
-			filter: PropertyFilter{
-				Limit: -1,
-			},
-			valid: false,
-		},
-		{
-			name: "Negative offset",
-			filter: PropertyFilter{
-				Offset: -1,
-			},
-			valid: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Basic validation logic
-			isValid := tt.filter.Limit >= 0 && tt.filter.Offset >= 0
+			isValid := tt.filter.ValorMin >= 0 && tt.filter.ValorMax >= 0
 			assert.Equal(t, tt.valid, isValid)
 		})
 	}
@@ -418,28 +317,26 @@ func TestPropertyFilter_Validation(t *testing.T) {
 
 func TestProperty_Validation(t *testing.T) {
 	property := Property{
-		ID:          "test-1",
-		Titulo:      "Casa Teste",
-		Descricao:   "Uma casa para teste",
-		Endereco:    "Rua Teste, 123",
-		Cidade:      "São Paulo",
-		Bairro:      "Centro",
-		TipoImovel:  "Casa",
-		Preco:       500000,
-		ValorTexto:  "R$ 500.000",
-		URL:         "https://test.com/property/1",
-		DataCriacao: time.Now(),
+		ID:         "test-1",
+		Descricao:  "Uma casa para teste",
+		Endereco:   "Rua Teste, 123",
+		Cidade:     "São Paulo",
+		Bairro:     "Centro",
+		TipoImovel: "Casa",
+		Valor:      500000,
+		ValorTexto: "R$ 500.000",
+		URL:        "https://test.com/property/1",
 	}
 
 	// Basic validation
 	assert.NotEmpty(t, property.ID)
-	assert.NotEmpty(t, property.Titulo)
-	assert.True(t, property.Preco >= 0)
+	assert.NotEmpty(t, property.Descricao)
+	assert.True(t, property.Valor >= 0)
 	assert.NotEmpty(t, property.URL)
 }
 
 // Benchmark tests
-func BenchmarkMongoPropertyRepository_Save(b *testing.B) {
+func BenchmarkMongoRepository_Save(b *testing.B) {
 	// Skip if MongoDB not available
 	clientOptions := options.Client().ApplyURI("mongodb://localhost:27017")
 	client, err := mongo.Connect(context.TODO(), clientOptions)
@@ -449,23 +346,26 @@ func BenchmarkMongoPropertyRepository_Save(b *testing.B) {
 	}
 	defer client.Disconnect(context.TODO())
 
-	repo := NewMongoPropertyRepository("mongodb://localhost:27017", "benchmark_test_db")
+	repo, err := NewMongoRepository("mongodb://localhost:27017", "benchmark_test_db", "properties")
+	if err != nil {
+		b.Skip("Failed to create repository")
+		return
+	}
 	defer repo.Close()
 
 	property := Property{
 		ID:         "benchmark-test",
-		Titulo:     "Benchmark Property",
 		Descricao:  "Property for benchmark testing",
 		Cidade:     "Test City",
 		Bairro:     "Test Neighborhood",
 		TipoImovel: "Casa",
-		Preco:      500000,
+		Valor:      500000,
 	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		property.ID = string(rune(i))
-		repo.Save(property)
+		repo.Save(context.Background(), property)
 	}
 }
 

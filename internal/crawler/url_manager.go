@@ -11,17 +11,63 @@ import (
 
 // URLManager gerencia URLs visitadas e extrai novos links
 type URLManager struct {
-	visitedURLs map[string]bool
-	mutex       sync.RWMutex
-	logger      *logger.Logger
+	visitedURLs        map[string]bool
+	mutex              sync.RWMutex
+	logger             *logger.Logger
+	pageClassifier     *PageClassifier
+	advancedClassifier *AdvancedPageClassifier
+	patternLearner     *PatternLearner
+	contentLearner     *ContentBasedPatternLearner
 }
 
 // NewURLManager cria um novo gerenciador de URLs
 func NewURLManager() *URLManager {
 	return &URLManager{
-		visitedURLs: make(map[string]bool),
-		logger:      logger.NewLogger("url_manager"),
+		visitedURLs:        make(map[string]bool),
+		logger:             logger.NewLogger("url_manager"),
+		pageClassifier:     NewPageClassifier(),
+		advancedClassifier: NewAdvancedPageClassifier(),
+		patternLearner:     NewPatternLearner(),
+		contentLearner:     NewContentBasedPatternLearner(),
 	}
+}
+
+// NewURLManagerWithPatternLearner cria um novo gerenciador de URLs com PatternLearner treinado
+func NewURLManagerWithPatternLearner(trainedPatternLearner *PatternLearner) *URLManager {
+	return &URLManager{
+		visitedURLs:        make(map[string]bool),
+		logger:             logger.NewLogger("url_manager"),
+		pageClassifier:     NewPageClassifier(),
+		advancedClassifier: NewAdvancedPageClassifier(),
+		patternLearner:     trainedPatternLearner,
+		contentLearner:     NewContentBasedPatternLearner(),
+	}
+}
+
+// NewURLManagerWithContentLearner cria um novo gerenciador com ContentBasedPatternLearner treinado
+func NewURLManagerWithContentLearner(trainedContentLearner *ContentBasedPatternLearner) *URLManager {
+	return &URLManager{
+		visitedURLs:        make(map[string]bool),
+		logger:             logger.NewLogger("url_manager"),
+		pageClassifier:     NewPageClassifier(),
+		advancedClassifier: NewAdvancedPageClassifier(),
+		patternLearner:     NewPatternLearner(),
+		contentLearner:     trainedContentLearner,
+	}
+}
+
+// SetPatternLearner define um PatternLearner treinado
+func (um *URLManager) SetPatternLearner(trainedPatternLearner *PatternLearner) {
+	um.mutex.Lock()
+	defer um.mutex.Unlock()
+	um.patternLearner = trainedPatternLearner
+}
+
+// SetContentLearner define um ContentBasedPatternLearner treinado
+func (um *URLManager) SetContentLearner(trainedContentLearner *ContentBasedPatternLearner) {
+	um.mutex.Lock()
+	defer um.mutex.Unlock()
+	um.contentLearner = trainedContentLearner
 }
 
 // IsVisited verifica se uma URL já foi visitada
@@ -119,41 +165,129 @@ func (um *URLManager) IsValidPropertyLink(link, host string) bool {
 	return false
 }
 
-// IsCatalogPage verifica se uma página é um catálogo/listagem
+// IsCatalogPage verifica se uma página é um catálogo/listagem usando análise de conteúdo inteligente
 func (um *URLManager) IsCatalogPage(e *colly.HTMLElement) bool {
 	url := e.Request.URL.String()
-	text := strings.ToLower(e.Text)
 
-	// Indicadores de página de catálogo
-	catalogIndicators := []string{
-		"imoveis/?", "busca", "listagem", "catalogo", "pesquisa",
-		"resultados", "filtros", "ordenar", "pagina=", "page=",
-	}
+	// PRIMEIRO: Usa o ContentBasedPatternLearner (MAIS INTELIGENTE - analisa conteúdo real)
+	if um.contentLearner != nil {
+		contentType, confidence := um.contentLearner.ClassifyPageContent(e)
 
-	indicatorCount := 0
-	for _, indicator := range catalogIndicators {
-		if strings.Contains(url, indicator) {
-			indicatorCount++
+		if contentType == "catalog" && confidence > 0.1 {
+			um.logger.WithFields(map[string]interface{}{
+				"url":        url,
+				"confidence": confidence,
+				"method":     "content_analysis",
+			}).Info("CATALOG page detected by CONTENT ANALYSIS - SKIPPING data extraction")
+			return true
+		}
+
+		// Se o sistema de conteúdo detectou como propriedade, confia nele
+		if contentType == "property" && confidence > 0.1 {
+			um.logger.WithFields(map[string]interface{}{
+				"url":        url,
+				"confidence": confidence,
+				"method":     "content_analysis",
+			}).Debug("PROPERTY page confirmed by CONTENT ANALYSIS - continuing")
+			return false
 		}
 	}
 
-	// Verifica se tem múltiplos preços (indicativo de listagem)
-	priceCount := strings.Count(text, "r$")
-	roomCount := strings.Count(text, "quartos")
+	// SEGUNDO: Fallback para PatternLearner baseado em URL (menos confiável)
+	if um.patternLearner != nil {
+		urlType, confidence := um.patternLearner.ClassifyURL(url)
 
-	// É catálogo se tem indicadores E múltiplos itens
-	isCatalog := indicatorCount > 0 && (priceCount > 5 || roomCount > 3)
-
-	if isCatalog {
-		um.logger.WithFields(map[string]interface{}{
-			"url":             url,
-			"indicator_count": indicatorCount,
-			"price_count":     priceCount,
-			"room_count":      roomCount,
-		}).Debug("Catalog page detected")
+		if urlType == "catalog" && confidence > 0.1 {
+			um.logger.WithFields(map[string]interface{}{
+				"url":        url,
+				"confidence": confidence,
+				"method":     "url_pattern_learner",
+			}).Info("CATALOG page detected by URL PATTERN - SKIPPING data extraction")
+			return true
+		}
 	}
 
-	return isCatalog
+	// TERCEIRO: Fallback para classificador rigoroso (último recurso)
+	isCatalog := um.advancedClassifier.IsCatalogPageStrict(e)
+	if isCatalog {
+		um.logger.WithFields(map[string]interface{}{
+			"url":    url,
+			"method": "advanced_classifier",
+		}).Info("CATALOG page detected by ADVANCED classifier - SKIPPING data extraction")
+		return true
+	}
+
+	return false
+}
+
+// IsPropertyPage verifica se uma página é um anúncio individual usando análise de conteúdo inteligente
+func (um *URLManager) IsPropertyPage(e *colly.HTMLElement) bool {
+	url := e.Request.URL.String()
+
+	// PRIMEIRO: Usa o ContentBasedPatternLearner (MAIS INTELIGENTE - analisa conteúdo real)
+	if um.contentLearner != nil {
+		contentType, confidence := um.contentLearner.ClassifyPageContent(e)
+
+		if contentType == "property" && confidence > 0.1 {
+			um.logger.WithFields(map[string]interface{}{
+				"url":        url,
+				"confidence": confidence,
+				"method":     "content_analysis",
+			}).Info("PROPERTY page detected by CONTENT ANALYSIS - PROCESSING data")
+			return true
+		}
+
+		// Se o sistema de conteúdo detectou como catálogo, definitivamente NÃO é property
+		if contentType == "catalog" && confidence > 0.1 {
+			um.logger.WithFields(map[string]interface{}{
+				"url":        url,
+				"confidence": confidence,
+				"method":     "content_analysis",
+			}).Debug("Page is CATALOG by CONTENT ANALYSIS - NOT a property page")
+			return false
+		}
+	}
+
+	// SEGUNDO: Fallback para PatternLearner baseado em URL
+	if um.patternLearner != nil {
+		urlType, confidence := um.patternLearner.ClassifyURL(url)
+
+		if urlType == "property" && confidence > 0.1 {
+			um.logger.WithFields(map[string]interface{}{
+				"url":        url,
+				"confidence": confidence,
+				"method":     "url_pattern_learner",
+			}).Info("PROPERTY page detected by URL PATTERN - PROCESSING data")
+			return true
+		}
+
+		// Se URL pattern detectou como catálogo, definitivamente NÃO é property
+		if urlType == "catalog" && confidence > 0.1 {
+			um.logger.WithFields(map[string]interface{}{
+				"url":        url,
+				"confidence": confidence,
+				"method":     "url_pattern_learner",
+			}).Debug("Page is CATALOG by URL PATTERN - NOT a property page")
+			return false
+		}
+	}
+
+	// TERCEIRO: Fallback para classificador rigoroso
+	isProperty := um.advancedClassifier.IsPropertyPageStrict(e)
+	if isProperty {
+		um.logger.WithFields(map[string]interface{}{
+			"url":    url,
+			"method": "advanced_classifier",
+		}).Info("PROPERTY page detected by ADVANCED classifier - PROCESSING data")
+		return true
+	}
+
+	// QUARTO: Se não tem certeza, assume que NÃO é property (mais conservador para evitar catálogos)
+	um.logger.WithFields(map[string]interface{}{
+		"url": url,
+	}).Debug("Page classification UNCERTAIN - SKIPPING to avoid catalog pages")
+
+	return false
 }
 
 // ShouldSkipURL verifica se uma URL deve ser ignorada

@@ -248,7 +248,7 @@ func performCleanup(ctx context.Context, urlRepo repository.URLRepository, appLo
 
 // showHelp mostra ajuda sobre os comandos disponíveis
 func showHelp() {
-	fmt.Println(`
+	fmt.Print(`
 Go Crawler - Sistema de Crawling Incremental
 
 USAGE:

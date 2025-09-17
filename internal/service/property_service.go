@@ -16,11 +16,13 @@ import (
 )
 
 type PropertyService struct {
-	repo          repository.PropertyRepository
-	urlRepo       repository.URLRepository
-	citySitesRepo repository.CitySitesRepository
-	config        *config.Config
-	logger        *logger.Logger
+	repo           repository.PropertyRepository
+	urlRepo        repository.URLRepository
+	citySitesRepo  repository.CitySitesRepository
+	config         *config.Config
+	logger         *logger.Logger
+	patternLearner *crawler.PatternLearner
+	contentLearner *crawler.ContentBasedPatternLearner
 }
 
 // CleanupOptions define as opções para limpeza do banco
@@ -41,23 +43,39 @@ type CleanupResult struct {
 
 func NewPropertyService(repo repository.PropertyRepository, urlRepo repository.URLRepository, cfg *config.Config) *PropertyService {
 	return &PropertyService{
-		repo:          repo,
-		urlRepo:       urlRepo,
-		citySitesRepo: nil, // Será inicializado quando necessário
-		config:        cfg,
-		logger:        logger.NewLogger("property_service"),
+		repo:           repo,
+		urlRepo:        urlRepo,
+		citySitesRepo:  nil, // Será inicializado quando necessário
+		config:         cfg,
+		logger:         logger.NewLogger("property_service"),
+		patternLearner: nil, // Será definido quando necessário
+		contentLearner: nil, // Será definido quando necessário
 	}
 }
 
 // NewPropertyServiceWithCitySites cria um PropertyService com repositório de cidades
 func NewPropertyServiceWithCitySites(repo repository.PropertyRepository, urlRepo repository.URLRepository, citySitesRepo repository.CitySitesRepository, cfg *config.Config) *PropertyService {
 	return &PropertyService{
-		repo:          repo,
-		urlRepo:       urlRepo,
-		citySitesRepo: citySitesRepo,
-		config:        cfg,
-		logger:        logger.NewLogger("property_service"),
+		repo:           repo,
+		urlRepo:        urlRepo,
+		citySitesRepo:  citySitesRepo,
+		config:         cfg,
+		logger:         logger.NewLogger("property_service"),
+		patternLearner: nil, // Será definido quando necessário
+		contentLearner: nil, // Será definido quando necessário
 	}
+}
+
+// SetPatternLearner define o PatternLearner treinado para uso no crawling
+func (s *PropertyService) SetPatternLearner(patternLearner *crawler.PatternLearner) {
+	s.patternLearner = patternLearner
+	s.logger.Info("PatternLearner set for intelligent crawling")
+}
+
+// SetContentLearner define o ContentBasedPatternLearner treinado para uso no crawling
+func (s *PropertyService) SetContentLearner(contentLearner *crawler.ContentBasedPatternLearner) {
+	s.contentLearner = contentLearner
+	s.logger.Info("ContentBasedPatternLearner set for intelligent content-based crawling")
 }
 
 func (s *PropertyService) SaveProperty(ctx context.Context, property repository.Property) error {
@@ -139,8 +157,18 @@ func (s *PropertyService) ForceCrawling(ctx context.Context, cities []string) er
 		UserAgent:            "Go-Crawler-Incremental/1.0",
 	}
 
-	// Criar e iniciar o crawler incremental
-	engine := crawler.NewIncrementalCrawlerEngine(s.repo, s.urlRepo, aiService, config)
+	// Criar e iniciar o crawler incremental (com ContentLearner se disponível)
+	var engine *crawler.IncrementalCrawlerEngine
+	if s.contentLearner != nil {
+		s.logger.Info("Using trained ContentBasedPatternLearner for INTELLIGENT content-based crawling")
+		engine = crawler.NewIncrementalCrawlerEngineWithContentLearner(s.repo, s.urlRepo, aiService, config, s.contentLearner)
+	} else if s.patternLearner != nil {
+		s.logger.Info("Using trained PatternLearner for URL-based crawling")
+		engine = crawler.NewIncrementalCrawlerEngineWithPatternLearner(s.repo, s.urlRepo, aiService, config, s.patternLearner)
+	} else {
+		s.logger.Info("Using standard crawler (no intelligent classification)")
+		engine = crawler.NewIncrementalCrawlerEngine(s.repo, s.urlRepo, aiService, config)
+	}
 
 	s.logger.Info("Starting incremental crawler engine")
 	if err := engine.Start(ctx, urls); err != nil {

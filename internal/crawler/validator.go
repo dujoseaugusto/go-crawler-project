@@ -167,16 +167,194 @@ func (pv *PropertyValidator) validateSuspiciousData(property *repository.Propert
 	return errors
 }
 
+// PropertyCompleteness representa a completude de uma propriedade
+type PropertyCompleteness struct {
+	Score           float64 `json:"score"`
+	MaxScore        float64 `json:"max_score"`
+	Percentage      float64 `json:"percentage"`
+	IsValidCatalog  bool    `json:"is_valid_catalog"`
+	MissingFields   []string `json:"missing_fields"`
+	WeightedScores  map[string]float64 `json:"weighted_scores"`
+}
+
+// CalculateCompleteness calcula a completude de uma propriedade com pesos
+func (pv *PropertyValidator) CalculateCompleteness(property *repository.Property) PropertyCompleteness {
+	// Definir pesos para cada campo (total = 100)
+	weights := map[string]float64{
+		"endereco":   25.0, // Peso maior para endereço
+		"descricao":  20.0, // Peso maior para descrição  
+		"cidade":     20.0, // Peso maior para cidade
+		"valor":      15.0, // Peso maior para valor
+		"quartos":    5.0,
+		"banheiros":  3.0,
+		"area_total": 4.0,
+		"tipo_imovel": 3.0,
+		"bairro":     2.0,
+		"cep":        2.0,
+		"caracteristicas": 1.0,
+	}
+
+	scores := make(map[string]float64)
+	var missingFields []string
+	totalScore := 0.0
+	maxScore := 0.0
+
+	// Calcular score para cada campo
+	for field, weight := range weights {
+		maxScore += weight
+		fieldScore := pv.calculateFieldScore(property, field) * weight
+		scores[field] = fieldScore
+		totalScore += fieldScore
+		
+		if fieldScore == 0 {
+			missingFields = append(missingFields, field)
+		}
+	}
+
+	percentage := (totalScore / maxScore) * 100
+	isValidCatalog := percentage >= 60.0 // 60% de completude mínima
+
+	return PropertyCompleteness{
+		Score:          totalScore,
+		MaxScore:       maxScore,
+		Percentage:     percentage,
+		IsValidCatalog: isValidCatalog,
+		MissingFields:  missingFields,
+		WeightedScores: scores,
+	}
+}
+
+// calculateFieldScore calcula o score de um campo específico (0.0 a 1.0)
+func (pv *PropertyValidator) calculateFieldScore(property *repository.Property, field string) float64 {
+	switch field {
+	case "endereco":
+		if property.Endereco == "" {
+			return 0.0
+		}
+		// Score baseado no tamanho e qualidade do endereço
+		if len(property.Endereco) < 10 {
+			return 0.3 // Endereço muito curto
+		}
+		if len(property.Endereco) >= 20 {
+			return 1.0 // Endereço completo
+		}
+		return 0.7 // Endereço médio
+		
+	case "descricao":
+		if property.Descricao == "" {
+			return 0.0
+		}
+		// Score baseado no tamanho da descrição
+		if len(property.Descricao) < 20 {
+			return 0.2
+		}
+		if len(property.Descricao) < 50 {
+			return 0.5
+		}
+		if len(property.Descricao) >= 100 {
+			return 1.0
+		}
+		return 0.8
+		
+	case "cidade":
+		if property.Cidade == "" {
+			return 0.0
+		}
+		return 1.0
+		
+	case "valor":
+		if property.Valor <= 0 {
+			return 0.0
+		}
+		// Valores muito baixos ou altos são suspeitos
+		if property.Valor < 10000 || property.Valor > 50000000 {
+			return 0.3
+		}
+		return 1.0
+		
+	case "quartos":
+		if property.Quartos <= 0 {
+			return 0.0
+		}
+		// Valores razoáveis de quartos
+		if property.Quartos > 10 {
+			return 0.3 // Suspeito
+		}
+		return 1.0
+		
+	case "banheiros":
+		if property.Banheiros <= 0 {
+			return 0.0
+		}
+		if property.Banheiros > 8 {
+			return 0.3 // Suspeito
+		}
+		return 1.0
+		
+	case "area_total":
+		if property.AreaTotal <= 0 {
+			return 0.0
+		}
+		// Área muito pequena ou muito grande é suspeita
+		if property.AreaTotal < 20 || property.AreaTotal > 10000 {
+			return 0.3
+		}
+		return 1.0
+		
+	case "tipo_imovel":
+		if property.TipoImovel == "" || property.TipoImovel == "Outro" {
+			return 0.0
+		}
+		return 1.0
+		
+	case "bairro":
+		if property.Bairro == "" {
+			return 0.0
+		}
+		return 1.0
+		
+	case "cep":
+		if property.CEP == "" {
+			return 0.0
+		}
+		// Validar formato do CEP
+		if len(property.CEP) == 8 || len(property.CEP) == 9 {
+			return 1.0
+		}
+		return 0.5
+		
+	case "caracteristicas":
+		if len(property.Caracteristicas) == 0 {
+			return 0.0
+		}
+		if len(property.Caracteristicas) >= 3 {
+			return 1.0
+		}
+		return 0.5
+		
+	default:
+		return 0.0
+	}
+}
+
 // IsValidForSaving verifica se a propriedade tem dados mínimos para ser salva
 func (pv *PropertyValidator) IsValidForSaving(property *repository.Property) bool {
-	// Critérios mínimos para salvar
-	hasBasicInfo := property.URL != "" &&
-		(property.Endereco != "" || property.Valor > 1000)
-
-	// Não deve ter erros críticos
+	// Usar o novo sistema de completude
+	completeness := pv.CalculateCompleteness(property)
+	
+	// Verificar se não tem erros críticos
 	result := pv.ValidateProperty(property)
+	
+	// Log da completude para debug
+	pv.logger.WithFields(map[string]interface{}{
+		"url":              property.URL,
+		"completeness":     completeness.Percentage,
+		"is_valid_catalog": completeness.IsValidCatalog,
+		"missing_fields":   completeness.MissingFields,
+		"has_errors":       !result.IsValid,
+	}).Info("Property completeness calculated")
 
-	return hasBasicInfo && result.IsValid
+	return completeness.IsValidCatalog && result.IsValid
 }
 
 // EnhanceProperty melhora os dados da propriedade com base em validações

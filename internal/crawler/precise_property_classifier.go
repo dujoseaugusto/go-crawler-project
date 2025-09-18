@@ -97,12 +97,12 @@ func NewPrecisePropertyClassifier() *PrecisePropertyClassifier {
 		regexp.MustCompile(`(?i)escolha\s+o\s+seu\s+im[óo]vel`),
 		regexp.MustCompile(`(?i)encontra\s+as\s+melhores`),
 		regexp.MustCompile(`(?i)diversas\s+op[çc][õo]es`),
-		
+
 		// NOVAS EXCLUSÕES BASEADAS NO EXEMPLO PROBLEMÁTICO
-		regexp.MustCompile(`(?i)\d+\s+im[óo]veis\s+ao\s+buscar`), // "8 imóveis ao buscar"
+		regexp.MustCompile(`(?i)\d+\s+im[óo]veis\s+ao\s+buscar`),                 // "8 imóveis ao buscar"
 		regexp.MustCompile(`(?i)as\s+melhores\s+op[çc][õo]es\s+de\s+im[óo]veis`), // "As melhores opções de imóveis"
-		regexp.MustCompile(`(?i)im[óo]veis\s+à\s+venda\s+em\s+\w+\s+em\s+\w+`), // "Casas à Venda em Muzambinho em Minas"
-		regexp.MustCompile(`(?i)\w+\s+à\s+venda\s+em\s+\w+\s+-\s+\w+`), // "Casas à Venda em Muzambinho - MG"
+		regexp.MustCompile(`(?i)im[óo]veis\s+à\s+venda\s+em\s+\w+\s+em\s+\w+`),   // "Casas à Venda em Muzambinho em Minas"
+		regexp.MustCompile(`(?i)\w+\s+à\s+venda\s+em\s+\w+\s+-\s+\w+`),           // "Casas à Venda em Muzambinho - MG"
 	}
 
 	// Padrões que REQUEREM para ser anúncio individual
@@ -145,7 +145,7 @@ func (ppc *PrecisePropertyClassifier) ClassifyPage(doc *goquery.Document, url st
 	pageText := strings.ToLower(doc.Text())
 	words := strings.Fields(pageText)
 	result.Details.WordCount = len(words)
-	
+
 	// VALIDAÇÃO ADICIONAL: URLs de catálogo/listagem
 	urlLower := strings.ToLower(url)
 	catalogURLPatterns := []string{
@@ -153,7 +153,7 @@ func (ppc *PrecisePropertyClassifier) ClassifyPage(doc *goquery.Document, url st
 		"/aluguel/casa/mg-", "/aluguel/apartamento/mg-", "/aluguel/terreno/mg-",
 		"/buscar/imoveis/", "/imoveis/venda/", "/imoveis/aluguel/",
 	}
-	
+
 	for _, pattern := range catalogURLPatterns {
 		if strings.Contains(urlLower, pattern) {
 			result.Details.IsGenericPage = true

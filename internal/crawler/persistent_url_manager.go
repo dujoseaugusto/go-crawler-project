@@ -16,12 +16,11 @@ import (
 
 // PersistentURLManager gerencia URLs com persistência no banco de dados
 type PersistentURLManager struct {
-	visitedURLs    map[string]bool
-	mutex          sync.RWMutex
-	logger         *logger.Logger
-	urlRepo        repository.URLRepository
-	config         PersistentURLConfig
-	contentLearner *ContentBasedPatternLearner
+	visitedURLs map[string]bool
+	mutex       sync.RWMutex
+	logger      *logger.Logger
+	urlRepo     repository.URLRepository
+	config      PersistentURLConfig
 }
 
 // PersistentURLConfig configurações para o gerenciador de URLs
@@ -41,11 +40,6 @@ type PropertyPageDetection struct {
 
 // NewPersistentURLManager cria um novo gerenciador persistente de URLs
 func NewPersistentURLManager(urlRepo repository.URLRepository, config PersistentURLConfig) *PersistentURLManager {
-	return NewPersistentURLManagerWithContentLearner(urlRepo, config, nil)
-}
-
-// NewPersistentURLManagerWithContentLearner cria um novo gerenciador com ContentBasedPatternLearner
-func NewPersistentURLManagerWithContentLearner(urlRepo repository.URLRepository, config PersistentURLConfig, contentLearner *ContentBasedPatternLearner) *PersistentURLManager {
 	if config.MaxAge == 0 {
 		config.MaxAge = 24 * time.Hour // Padrão: 24 horas
 	}
@@ -57,11 +51,10 @@ func NewPersistentURLManagerWithContentLearner(urlRepo repository.URLRepository,
 	}
 
 	return &PersistentURLManager{
-		visitedURLs:    make(map[string]bool),
-		logger:         logger.NewLogger("persistent_url_manager"),
-		urlRepo:        urlRepo,
-		config:         config,
-		contentLearner: contentLearner,
+		visitedURLs: make(map[string]bool),
+		logger:      logger.NewLogger("persistent_url_manager"),
+		urlRepo:     urlRepo,
+		config:      config,
 	}
 }
 
@@ -347,205 +340,21 @@ func (pum *PersistentURLManager) NormalizeURL(rawURL string) string {
 
 // DetectPropertyPage analisa se uma página é de anúncio INDIVIDUAL de imóvel
 func (pum *PersistentURLManager) DetectPropertyPage(e *colly.HTMLElement) PropertyPageDetection {
-	var indicators []string
-	confidence := 0.0
-
-	urlStr := e.Request.URL.String()
-
-	// PRIMEIRO: Usa ContentBasedPatternLearner se disponível (MAIS INTELIGENTE)
-	if pum.contentLearner != nil {
-		contentType, contentConfidence := pum.contentLearner.ClassifyPageContent(e)
-
-		if contentType == "catalog" && contentConfidence > 0.1 {
-			indicators = append(indicators, "catalog_detected_by_content_analysis")
-			pum.logger.WithFields(map[string]interface{}{
-				"url":        urlStr,
-				"confidence": contentConfidence,
-				"method":     "content_analysis",
-			}).Info("CATALOG page detected by CONTENT ANALYSIS - NOT a property page")
-
-			return PropertyPageDetection{
-				IsPropertyPage: false,
-				Confidence:     0.0,
-				Indicators:     indicators,
-			}
-		}
-
-		if contentType == "property" && contentConfidence > 0.1 {
-			indicators = append(indicators, "property_detected_by_content_analysis")
-			pum.logger.WithFields(map[string]interface{}{
-				"url":        urlStr,
-				"confidence": contentConfidence,
-				"method":     "content_analysis",
-			}).Info("PROPERTY page detected by CONTENT ANALYSIS")
-
-			return PropertyPageDetection{
-				IsPropertyPage: true,
-				Confidence:     contentConfidence,
-				Indicators:     indicators,
-			}
-		}
-	}
-
-	// SEGUNDO: Fallback para análise tradicional
-	urlLower := strings.ToLower(urlStr)
-	bodyText := strings.ToLower(e.Text)
-
-	// Verifica se é página de CATÁLOGO/LISTAGEM (deve CONTINUAR navegando)
-	catalogIndicators := []string{
-		"imoveis/?", "busca", "listagem", "catalogo", "pesquisa", "resultados",
-		"filtros", "ordenar", "pagina=", "page=", "/imoveis", "/properties",
-	}
-
-	catalogCount := 0
-	for _, indicator := range catalogIndicators {
-		if strings.Contains(urlLower, indicator) {
-			catalogCount++
-		}
-	}
-
-	// Verifica se tem múltiplos preços (indicativo de listagem)
-	priceCount := strings.Count(bodyText, "r$")
-	roomCount := strings.Count(bodyText, "quartos")
-
-	// Se parece ser catálogo, NÃO é página individual
-	if catalogCount > 0 && (priceCount > 5 || roomCount > 3) {
-		indicators = append(indicators, "catalog_page_detected_by_traditional_analysis")
-		return PropertyPageDetection{
-			IsPropertyPage: false,
-			Confidence:     0.0,
-			Indicators:     indicators,
-		}
-	}
-
-	// SEGUNDO: Verifica se é ANÚNCIO INDIVIDUAL (deve PARAR navegação)
-
-	// 1. URL deve indicar item específico (com ID ou slug específico)
-	individualURLPatterns := []string{
-		"/imovel/", "/property/", "/detalhes/", "/details/", "/anuncio/",
-		"/casa/", "/apartamento/", "/terreno/", "/comercial/",
-		"/venda/", "/aluguel/", "/locacao/",
-	}
-
-	hasIndividualURL := false
-	for _, pattern := range individualURLPatterns {
-		if strings.Contains(urlLower, pattern) {
-			// Verifica se tem ID ou slug após o padrão
-			if strings.Contains(urlLower, pattern) && len(strings.Split(urlLower, pattern)) > 1 {
-				afterPattern := strings.Split(urlLower, pattern)[1]
-				if len(afterPattern) > 0 && !strings.Contains(afterPattern, "?") {
-					hasIndividualURL = true
-					indicators = append(indicators, "individual_url_pattern")
-					confidence += 0.4
-					break
-				}
-			}
-		}
-	}
-
-	// 2. Deve ter UM preço principal (não múltiplos)
-	priceElements := 0
-	e.ForEach("*[class*='price'], *[class*='preco'], *[class*='valor'], *[id*='price'], *[id*='preco'], *[id*='valor']", func(_ int, el *colly.HTMLElement) {
-		text := strings.TrimSpace(el.Text)
-		if pum.looksLikePrice(text) {
-			priceElements++
-		}
-	})
-
-	if priceElements == 1 {
-		indicators = append(indicators, "single_price_found")
-		confidence += 0.3
-	} else if priceElements > 3 {
-		// Múltiplos preços = provavelmente catálogo
-		indicators = append(indicators, "multiple_prices_catalog")
-		return PropertyPageDetection{
-			IsPropertyPage: false,
-			Confidence:     0.0,
-			Indicators:     indicators,
-		}
-	}
-
-	// 3. Características detalhadas de UM imóvel específico
-	propertyKeywords := []string{
-		"quarto", "dormitório", "banheiro", "garagem", "área", "m²", "m2",
-		"suite", "suíte", "sala", "cozinha", "varanda", "terraço",
-	}
-
-	keywordCount := 0
-	for _, keyword := range propertyKeywords {
-		if strings.Contains(bodyText, keyword) {
-			keywordCount++
-		}
-	}
-
-	if keywordCount >= 4 {
-		indicators = append(indicators, fmt.Sprintf("detailed_property_info_%d", keywordCount))
-		confidence += 0.2
-	}
-
-	// 4. Estrutura de página individual (descrição longa, detalhes)
-	descriptionLength := len(bodyText)
-	if descriptionLength > 500 && descriptionLength < 5000 { // Não muito curto, não muito longo
-		indicators = append(indicators, "appropriate_description_length")
-		confidence += 0.1
-	}
-
-	// 5. Elementos típicos de página individual
-	individualElements := []string{
-		"*[class*='description']", "*[class*='descricao']", "*[class*='detail']",
-		"*[class*='caracteristica']", "*[class*='feature']", "*[class*='contact']",
-	}
-
-	elementCount := 0
-	for _, selector := range individualElements {
-		e.ForEach(selector, func(_ int, el *colly.HTMLElement) {
-			elementCount++
-		})
-	}
-
-	if elementCount > 0 {
-		indicators = append(indicators, "individual_page_elements")
-		confidence += 0.1
-	}
-
-	// DECISÃO: É página individual se tem URL específica E características individuais
-	isIndividualProperty := hasIndividualURL && confidence >= 0.6
-
+	// SISTEMA SIMPLIFICADO - Todas as páginas são tratadas como propriedades
 	return PropertyPageDetection{
-		IsPropertyPage: isIndividualProperty,
-		Confidence:     confidence,
-		Indicators:     indicators,
+		IsPropertyPage: true,
+		Confidence:     1.0,
+		Indicators:     []string{"simplified_system_all_pages_as_properties"},
 	}
 }
 
 // ShouldSkipInternalLinks determina se deve parar de seguir links internos desta página
 func (pum *PersistentURLManager) ShouldSkipInternalLinks(e *colly.HTMLElement) bool {
-	detection := pum.DetectPropertyPage(e)
-
-	// APENAS para de seguir links se detectou página INDIVIDUAL de imóvel com alta confiança
-	if detection.IsPropertyPage && detection.Confidence >= 0.6 {
-		pum.logger.WithFields(map[string]interface{}{
-			"url":        e.Request.URL.String(),
-			"confidence": detection.Confidence,
-			"indicators": detection.Indicators,
-		}).Info("Individual property page detected - stopping internal link crawling")
-
-		return true
-	}
-
-	// Log para páginas de catálogo (deve continuar navegando)
-	if len(detection.Indicators) > 0 {
-		for _, indicator := range detection.Indicators {
-			if strings.Contains(indicator, "catalog") {
-				pum.logger.WithFields(map[string]interface{}{
-					"url":        e.Request.URL.String(),
-					"confidence": detection.Confidence,
-					"indicators": detection.Indicators,
-				}).Debug("Catalog page detected - continuing navigation")
-				break
-			}
-		}
-	}
+	// SISTEMA SIMPLIFICADO - NUNCA para de seguir links internos
+	// Isso permite navegação profunda para encontrar anúncios específicos
+	pum.logger.WithFields(map[string]interface{}{
+		"url": e.Request.URL.String(),
+	}).Debug("Continuing internal link crawling - simplified system")
 
 	return false
 }
@@ -708,6 +517,7 @@ func (pum *PersistentURLManager) IsValidPropertyLink(link, host string) bool {
 	// Ignora links de redes sociais e contato
 	socialPatterns := []string{
 		"wa.me", "whatsapp", "mailto:", "tel:", "facebook", "instagram", "twitter",
+		"javascript:", "#", "void(0)", ".pdf", ".jpg", ".png", ".gif", ".css", ".js",
 	}
 
 	linkLower := strings.ToLower(link)
@@ -717,25 +527,9 @@ func (pum *PersistentURLManager) IsValidPropertyLink(link, host string) bool {
 		}
 	}
 
-	// Verifica se parece ser um link de propriedade
-	propertyPatterns := []string{
-		"detalhes", "imovel/", "propriedade/", "anuncio/",
-		"/VENDAS/", "/ALUGUEIS/", "/casa/", "/apartamento/",
-	}
-
-	for _, pattern := range propertyPatterns {
-		if strings.Contains(link, pattern) {
-			return true
-		}
-	}
-
-	// Verifica se termina com número (padrão comum para IDs de propriedades)
-	numberEndRegex := regexp.MustCompile(`/\d+/?$`)
-	if numberEndRegex.MatchString(link) {
-		return true
-	}
-
-	return false
+	// SISTEMA SIMPLIFICADO - Aceita TODOS os links internos válidos
+	// Isso permite navegação profunda para encontrar anúncios específicos
+	return true
 }
 
 // CleanupOldURLs limpa URLs antigas da memória (compatibilidade)

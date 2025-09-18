@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PuerkitoBio/goquery"
 	"github.com/dujoseaugusto/go-crawler-project/internal/ai"
 	"github.com/dujoseaugusto/go-crawler-project/internal/logger"
 	"github.com/dujoseaugusto/go-crawler-project/internal/repository"
@@ -14,15 +15,20 @@ import (
 
 // IncrementalCrawlerEngine implementa crawling incremental com fingerprinting
 type IncrementalCrawlerEngine struct {
-	repository repository.PropertyRepository
-	urlRepo    repository.URLRepository
-	aiService  *ai.GeminiService
-	extractor  *DataExtractor
-	validator  *PropertyValidator
-	urlManager *PersistentURLManager
-	logger     *logger.Logger
-	config     IncrementalConfig
-	stats      *IncrementalStats
+	repository        repository.PropertyRepository
+	urlRepo           repository.URLRepository
+	aiService         *ai.GeminiService
+	extractor         *DataExtractor
+	validator         *PropertyValidator
+	urlManager        *PersistentURLManager
+	smartClassifier   *SmartPageClassifier
+	contentClassifier *ContentBasedClassifier
+	preciseClassifier *PrecisePropertyClassifier
+	navigationManager *SmartNavigationManager
+	collector         *colly.Collector
+	logger            *logger.Logger
+	config            IncrementalConfig
+	stats             *IncrementalStats
 }
 
 // IncrementalConfig configurações para o crawler incremental
@@ -113,25 +119,59 @@ func NewIncrementalCrawlerEngineWithContentLearner(
 		AIThreshold:          config.AIThreshold,
 	}
 
-	// Cria URL Manager com ContentLearner se disponível
-	var urlManager *PersistentURLManager
-	if contentLearner != nil {
-		urlManager = NewPersistentURLManagerWithContentLearner(urlRepo, urlManagerConfig, contentLearner)
-	} else {
-		urlManager = NewPersistentURLManager(urlRepo, urlManagerConfig)
-	}
+	// Cria URL Manager simplificado
+	urlManager := NewPersistentURLManager(urlRepo, urlManagerConfig)
 
 	return &IncrementalCrawlerEngine{
-		repository: propertyRepo,
-		urlRepo:    urlRepo,
-		aiService:  aiService,
-		extractor:  NewDataExtractor(),
-		validator:  NewPropertyValidator(),
-		urlManager: urlManager,
-		logger:     logger.NewLogger("incremental_crawler"),
-		config:     config,
-		stats:      &IncrementalStats{},
+		repository:        propertyRepo,
+		urlRepo:           urlRepo,
+		aiService:         aiService,
+		extractor:         NewDataExtractor(),
+		validator:         NewPropertyValidator(),
+		urlManager:        urlManager,
+		smartClassifier:   nil,                            // Será inicializado quando necessário
+		contentClassifier: nil,                            // Será inicializado quando necessário
+		preciseClassifier: NewPrecisePropertyClassifier(), // Classificador rigoroso sempre ativo
+		navigationManager: NewSmartNavigationManager(),    // Gerenciador de navegação inteligente
+		logger:            logger.NewLogger("incremental_crawler"),
+		config:            config,
+		stats:             &IncrementalStats{},
 	}
+}
+
+// InitializeSmartClassifier inicializa o classificador inteligente com URLs de referência
+func (ice *IncrementalCrawlerEngine) InitializeSmartClassifier(referenceURLs []string) {
+	ice.smartClassifier = NewSmartPageClassifier(referenceURLs)
+	ice.logger.WithField("reference_urls_count", len(referenceURLs)).Info("Smart classifier initialized")
+}
+
+// InitializeContentClassifier inicializa o classificador baseado em conteúdo
+func (ice *IncrementalCrawlerEngine) InitializeContentClassifier(referenceURLs []string) error {
+	ice.logger.Info("Starting content pattern training from reference pages")
+
+	// Criar treinador de padrões de conteúdo
+	trainer := NewContentPatternTrainer(referenceURLs)
+
+	// Treinar com as páginas de referência
+	err := trainer.TrainFromReferencePages()
+	if err != nil {
+		return fmt.Errorf("erro no treinamento de padrões: %v", err)
+	}
+
+	// Obter padrões aprendidos
+	patterns := trainer.GetLearnedPatterns()
+
+	// Criar classificador com os padrões
+	ice.contentClassifier = NewContentBasedClassifier(patterns)
+
+	ice.logger.WithFields(map[string]interface{}{
+		"reference_urls":      len(referenceURLs),
+		"successful_analysis": patterns.SuccessfulAnalysis,
+		"common_selectors":    len(patterns.CommonSelectors),
+		"common_keywords":     len(patterns.CommonKeywords),
+	}).Info("Content-based classifier initialized")
+
+	return nil
 }
 
 // Start inicia o crawling incremental
@@ -159,18 +199,18 @@ func (ice *IncrementalCrawlerEngine) Start(ctx context.Context, urls []string) e
 	}
 
 	// Configura o collector
-	collector := ice.setupCollector()
+	ice.collector = ice.setupCollector()
 
 	// Processa cada URL
 	for _, url := range urls {
-		if err := ice.processURL(ctx, collector, url); err != nil {
+		if err := ice.processURL(ctx, ice.collector, url); err != nil {
 			ice.logger.WithField("url", url).Error("Failed to process URL", err)
 			ice.stats.FailedURLs++
 		}
 	}
 
 	// Aguarda conclusão
-	collector.Wait()
+	ice.collector.Wait()
 
 	// Finaliza estatísticas
 	ice.stats.EndTime = time.Now()
@@ -255,6 +295,81 @@ func (ice *IncrementalCrawlerEngine) processURL(ctx context.Context, collector *
 func (ice *IncrementalCrawlerEngine) handlePropertyPage(ctx context.Context, e *colly.HTMLElement) {
 	startTime := time.Now()
 	url := e.Request.URL.String()
+
+	// NAVEGAÇÃO INTELIGENTE: Analisar tipo de página e descobrir links
+	doc := &goquery.Document{Selection: e.DOM}
+	navigationResult := ice.navigationManager.AnalyzePage(doc, url)
+
+	ice.logger.WithFields(map[string]interface{}{
+		"url":              url,
+		"is_catalog":       navigationResult.IsCatalogPage,
+		"is_property":      navigationResult.IsPropertyPage,
+		"property_links":   len(navigationResult.PropertyLinks),
+		"pagination_links": len(navigationResult.PaginationLinks),
+		"catalog_links":    len(navigationResult.CatalogLinks),
+		"confidence":       navigationResult.Confidence,
+		"reason":           navigationResult.Reason,
+	}).Debug("Navigation analysis completed")
+
+	// Se é página de catálogo, navegar pelos links encontrados
+	if navigationResult.IsCatalogPage {
+		ice.logger.WithFields(map[string]interface{}{
+			"url":              url,
+			"property_links":   len(navigationResult.PropertyLinks),
+			"pagination_links": len(navigationResult.PaginationLinks),
+		}).Info("Catalog page detected - navigating to individual properties")
+
+		// Navegar pelos anúncios individuais e paginação
+		ice.navigationManager.NavigateFromCatalog(ice.collector, url, navigationResult)
+
+		// Marcar como processado mas não extrair dados (é catálogo, não anúncio)
+		ice.urlManager.MarkURLProcessed(ctx, url, "catalog", "Catalog page - navigated to individual properties")
+		return
+	}
+
+	// Se é página genérica, navegar pelos catálogos encontrados
+	if !navigationResult.IsPropertyPage && len(navigationResult.CatalogLinks) > 0 {
+		ice.logger.WithFields(map[string]interface{}{
+			"url":           url,
+			"catalog_links": len(navigationResult.CatalogLinks),
+		}).Info("Generic page detected - navigating to catalogs")
+
+		ice.navigationManager.NavigateFromGeneric(ice.collector, url, navigationResult)
+
+		// Marcar como processado
+		ice.urlManager.MarkURLProcessed(ctx, url, "generic", "Generic page - navigated to catalogs")
+		return
+	}
+
+	// VALIDAÇÃO RIGOROSA: Usar classificador preciso para anúncios individuais
+	preciseResult := ice.preciseClassifier.ClassifyPage(doc, url)
+
+	ice.logger.WithFields(map[string]interface{}{
+		"url":                    url,
+		"is_individual_property": preciseResult.IsIndividualProperty,
+		"confidence":             preciseResult.Confidence,
+		"score":                  fmt.Sprintf("%.1f/%.1f", preciseResult.Score, preciseResult.MaxScore),
+		"reason":                 preciseResult.Reason,
+	}).Debug("Precise classification result")
+
+	if !preciseResult.IsIndividualProperty {
+		ice.logger.WithFields(map[string]interface{}{
+			"url":        url,
+			"confidence": preciseResult.Confidence,
+			"score":      fmt.Sprintf("%.1f/%.1f", preciseResult.Score, preciseResult.MaxScore),
+			"reason":     preciseResult.Reason,
+			"details":    preciseResult.Details,
+		}).Info("Page rejected by precise classifier - not an individual property")
+		ice.urlManager.MarkURLProcessed(ctx, url, "rejected", fmt.Sprintf("Precise classifier: %s", preciseResult.Reason))
+		ice.stats.SkippedURLs++
+		return
+	}
+
+	ice.logger.WithFields(map[string]interface{}{
+		"url":        url,
+		"confidence": preciseResult.Confidence,
+		"score":      fmt.Sprintf("%.1f/%.1f", preciseResult.Score, preciseResult.MaxScore),
+	}).Info("Page accepted by precise classifier - individual property detected")
 
 	// Gera fingerprint da página se habilitado
 	var currentFingerprint string

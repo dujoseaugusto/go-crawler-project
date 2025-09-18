@@ -40,15 +40,7 @@ func SetupRouterWithContentLearning(propertyService *service.PropertyService, ci
 		citySitesHandler = handler.NewCitySitesHandler(citySitesService)
 	}
 
-	var patternLearningHandler *handler.PatternLearningHandler
-	if patternLearner != nil {
-		patternLearningHandler = handler.NewPatternLearningHandler(patternLearner)
-	}
-
-	var contentLearningHandler *handler.ContentLearningHandler
-	if contentLearner != nil {
-		contentLearningHandler = handler.NewContentLearningHandler(contentLearner)
-	}
+	// Handlers de aprendizado removidos - sistema simplificado
 
 	// Aplicar middlewares
 	r.Use(middleware.CORSMiddleware())
@@ -68,6 +60,14 @@ func SetupRouterWithContentLearning(propertyService *service.PropertyService, ci
 	// Rota adicional para servir a interface web
 	r.GET("/web", func(c *gin.Context) {
 		c.Redirect(301, "/")
+	})
+
+	// Documentação da API (Swagger UI)
+	r.GET("/docs", func(c *gin.Context) {
+		c.File("./web/docs.html")
+	})
+	r.GET("/api-docs", func(c *gin.Context) {
+		c.Redirect(301, "/docs")
 	})
 
 	// Endpoints de propriedades
@@ -111,58 +111,25 @@ func SetupRouterWithContentLearning(propertyService *service.PropertyService, ci
 		}
 	}
 
-	// Endpoints de aprendizado de padrões (apenas se o serviço estiver disponível)
-	if patternLearningHandler != nil {
-		patternsGroup := r.Group("/patterns")
-		{
-			// Aprendizado baseado em URL (método antigo)
-			patternsGroup.POST("/learn/catalog", patternLearningHandler.LearnCatalogURLs)
-			patternsGroup.POST("/learn/property", patternLearningHandler.LearnPropertyURLs)
+	// Sistema de padrões removido - não é mais necessário
 
-			// Classificação baseada em URL
-			patternsGroup.POST("/classify", patternLearningHandler.ClassifyURL)
-
-			// Gerenciamento de padrões
-			patternsGroup.GET("", patternLearningHandler.GetLearnedPatterns)
-			patternsGroup.GET("/export", patternLearningHandler.ExportPatterns)
-			patternsGroup.POST("/import", patternLearningHandler.ImportPatterns)
-		}
-	}
-
-	// Endpoints de aprendizado baseado em conteúdo (novo método inteligente)
-	if contentLearningHandler != nil {
-		contentGroup := r.Group("/content")
-		{
-			// Aprendizado baseado em conteúdo da página
-			contentGroup.POST("/learn/catalog", contentLearningHandler.LearnCatalogPages)
-			contentGroup.POST("/learn/property", contentLearningHandler.LearnPropertyPages)
-
-			// Classificação baseada em conteúdo
-			contentGroup.POST("/classify", contentLearningHandler.ClassifyPage)
-
-			// Gerenciamento de padrões de conteúdo
-			contentGroup.GET("/patterns", contentLearningHandler.GetLearnedPatterns)
-		}
-	}
+	// Sistema de aprendizado removido - não é mais necessário
 
 	// Endpoint de health check (sem rate limiting)
 	r.GET("/health", func(c *gin.Context) {
-		features := []string{"web-interface", "search", "crawler"}
+		features := []string{"web-interface", "search", "crawler", "swagger-documentation"}
 		if citySitesHandler != nil {
 			features = append(features, "city-sites-management", "site-discovery")
 		}
-		if patternLearningHandler != nil {
-			features = append(features, "pattern-learning", "url-classification")
-		}
-		if contentLearningHandler != nil {
-			features = append(features, "content-learning", "intelligent-classification")
-		}
 
 		c.JSON(200, gin.H{
-			"status":   "healthy",
-			"service":  "go-crawler-api",
-			"version":  "1.2.0",
-			"features": features,
+			"status":      "healthy",
+			"service":     "go-crawler-api",
+			"version":     "1.3.0",
+			"features":    features,
+			"docs_url":    "/docs",
+			"mode":        "simplified",
+			"description": "Sistema simplificado - coleta todas as páginas como propriedades",
 		})
 	})
 

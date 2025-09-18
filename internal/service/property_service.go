@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/dujoseaugusto/go-crawler-project/internal/ai"
@@ -157,44 +158,21 @@ func (s *PropertyService) ForceCrawling(ctx context.Context, cities []string) er
 		UserAgent:            "Go-Crawler-Incremental/1.0",
 	}
 
-	// Criar e iniciar o crawler incremental (com ContentLearner se disponível)
-	var engine *crawler.IncrementalCrawlerEngine
-	if s.contentLearner != nil {
-		s.logger.Info("Using trained ContentBasedPatternLearner for INTELLIGENT content-based crawling")
-		engine = crawler.NewIncrementalCrawlerEngineWithContentLearner(s.repo, s.urlRepo, aiService, config, s.contentLearner)
-	} else if s.patternLearner != nil {
-		s.logger.Info("Using trained PatternLearner for URL-based crawling")
-		engine = crawler.NewIncrementalCrawlerEngineWithPatternLearner(s.repo, s.urlRepo, aiService, config, s.patternLearner)
-	} else {
-		s.logger.Info("Using standard crawler (no intelligent classification)")
-		engine = crawler.NewIncrementalCrawlerEngine(s.repo, s.urlRepo, aiService, config)
-	}
+	// USAR CRAWLER RECURSIVO SIMPLES
+	s.logger.Info("Using simple recursive crawler for better navigation and property discovery")
+	simpleCrawler := crawler.NewSimpleRecursiveCrawler(s.repo, s.urlRepo)
 
-	s.logger.Info("Starting incremental crawler engine")
-	if err := engine.Start(ctx, urls); err != nil {
+	s.logger.Info("Starting simple recursive crawler engine")
+	if err := simpleCrawler.Start(ctx, urls); err != nil {
 		s.logger.Error("Incremental crawler engine failed", err)
 		return fmt.Errorf("erro no crawler incremental: %v", err)
 	}
 
-	// Log das estatísticas finais
-	stats := engine.GetStatistics()
+	// Log das estatísticas finais (simplificado para o crawler recursivo)
 	s.logger.WithFields(map[string]interface{}{
-		"total_urls":          stats.TotalURLs,
-		"processed_urls":      stats.ProcessedURLs,
-		"skipped_urls":        stats.SkippedURLs,
-		"new_properties":      stats.NewProperties,
-		"updated_properties":  stats.UpdatedProperties,
-		"failed_urls":         stats.FailedURLs,
-		"ai_processing_count": stats.AIProcessingCount,
-		"ai_skipped_count":    stats.AISkippedCount,
-		"fingerprint_hits":    stats.FingerprintHits,
-		"fingerprint_misses":  stats.FingerprintMisses,
-		"content_changes":     stats.ContentChanges,
-		"processing_time":     stats.ProcessingTimeTotal.String(),
-		"ai_savings_estimate": stats.AISavingsEstimate.String(),
-		"success_rate":        s.calculateSuccessRate(stats.NewProperties+stats.UpdatedProperties, stats.ProcessedURLs),
-		"skip_rate":           s.calculateSkipRate(stats.SkippedURLs, stats.TotalURLs),
-	}).Info("Incremental crawling process completed")
+		"total_urls":   len(urls),
+		"crawler_type": "simple_recursive",
+	}).Info("Simple recursive crawling process completed")
 
 	// Executar limpeza de registros antigos se necessário
 	if err := s.urlRepo.CleanupOldRecords(ctx, config.CleanupInterval); err != nil {
@@ -297,4 +275,45 @@ func (s *PropertyService) CleanupDatabase(ctx context.Context, options CleanupOp
 	s.logger.WithField("message", result.Message).Info("Limpeza concluída com sucesso")
 
 	return result
+}
+
+// loadReferenceURLs carrega URLs de referência do arquivo List-site.ini
+func (s *PropertyService) loadReferenceURLs() ([]string, error) {
+	referenceFile := "List-site.ini"
+
+	// Tentar encontrar o arquivo na raiz do projeto
+	if _, err := os.Stat(referenceFile); os.IsNotExist(err) {
+		return nil, fmt.Errorf("arquivo de referência não encontrado: %s", referenceFile)
+	}
+
+	content, err := os.ReadFile(referenceFile)
+	if err != nil {
+		return nil, fmt.Errorf("erro ao ler arquivo de referência: %v", err)
+	}
+
+	lines := strings.Split(string(content), "\n")
+	var urls []string
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		// Ignorar linhas vazias e comentários
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		// Remover numeração se existir (ex: "1|https://...")
+		if strings.Contains(line, "|") {
+			parts := strings.SplitN(line, "|", 2)
+			if len(parts) == 2 {
+				line = strings.TrimSpace(parts[1])
+			}
+		}
+
+		// Validar se é uma URL válida
+		if strings.HasPrefix(line, "http://") || strings.HasPrefix(line, "https://") {
+			urls = append(urls, line)
+		}
+	}
+
+	return urls, nil
 }

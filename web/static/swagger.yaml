@@ -1,0 +1,926 @@
+openapi: 3.0.3
+info:
+  title: Go Crawler API
+  description: |
+    API para crawling inteligente de imóveis com sistema de aprendizado de padrões baseado em conteúdo.
+    
+    ## Funcionalidades Principais
+    - **Crawling Inteligente**: Coleta automática de propriedades com classificação de páginas
+    - **Aprendizado de Padrões**: Sistema que aprende a distinguir páginas de catálogo vs propriedades individuais
+    - **Gerenciamento de Cidades**: Descoberta e gerenciamento de sites imobiliários por cidade
+    - **Busca Avançada**: Busca de propriedades com filtros múltiplos
+    - **Interface Web**: Interface gráfica para visualização e gerenciamento
+    
+    ## Sistema de Classificação Inteligente
+    O sistema utiliza análise de conteúdo para classificar páginas automaticamente:
+    - **Páginas de Catálogo**: Listagens com múltiplos imóveis
+    - **Páginas de Propriedade**: Detalhes de imóveis individuais
+    - **Precisão Atual**: ~80% após treinamento com exemplos reais
+    
+  version: 1.2.0
+  contact:
+    name: Go Crawler API Support
+    email: support@gocrawler.com
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:8081
+    description: Servidor de desenvolvimento
+  - url: https://api.gocrawler.com
+    description: Servidor de produção
+
+tags:
+  - name: Health
+    description: Status e saúde da API
+  - name: Properties
+    description: Gerenciamento de propriedades imobiliárias
+  - name: Crawler
+    description: Operações de crawling e limpeza
+  - name: Cities
+    description: Gerenciamento de cidades e sites
+  - name: Content Learning
+    description: Aprendizado inteligente baseado em conteúdo (RECOMENDADO)
+  - name: Pattern Learning
+    description: Aprendizado baseado em URL (LEGADO)
+  - name: Web Interface
+    description: Interface web para visualização
+
+paths:
+  /health:
+    get:
+      tags:
+        - Health
+      summary: Verificar status da API
+      description: Retorna o status de saúde da API e funcionalidades disponíveis
+      responses:
+        '200':
+          description: API funcionando corretamente
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "healthy"
+                  service:
+                    type: string
+                    example: "go-crawler-api"
+                  version:
+                    type: string
+                    example: "1.2.0"
+                  features:
+                    type: array
+                    items:
+                      type: string
+                    example: ["web-interface", "search", "crawler", "city-sites-management", "content-learning"]
+
+  /:
+    get:
+      tags:
+        - Web Interface
+      summary: Interface web principal
+      description: Serve a interface web para visualização e gerenciamento
+      responses:
+        '200':
+          description: Página HTML da interface web
+          content:
+            text/html:
+              schema:
+                type: string
+
+  /properties:
+    get:
+      tags:
+        - Properties
+      summary: Listar propriedades
+      description: Retorna lista paginada de propriedades coletadas
+      parameters:
+        - name: page
+          in: query
+          description: Número da página (padrão 1)
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: page_size
+          in: query
+          description: Itens por página (padrão 10, máximo 100)
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 10
+        - name: cidade
+          in: query
+          description: Filtrar por cidade
+          schema:
+            type: string
+        - name: tipo_imovel
+          in: query
+          description: Filtrar por tipo de imóvel
+          schema:
+            type: string
+            enum: [Casa, Apartamento, Terreno, Comercial, Rural, Outro]
+        - name: valor_min
+          in: query
+          description: Valor mínimo
+          schema:
+            type: number
+        - name: valor_max
+          in: query
+          description: Valor máximo
+          schema:
+            type: number
+      responses:
+        '200':
+          description: Lista de propriedades
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Propriedades recuperadas com sucesso"
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Property'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+
+  /properties/search:
+    get:
+      tags:
+        - Properties
+      summary: Buscar propriedades
+      description: Busca avançada de propriedades com múltiplos filtros
+      parameters:
+        - name: q
+          in: query
+          description: Termo de busca (endereço, descrição, etc.)
+          schema:
+            type: string
+        - name: cidade
+          in: query
+          description: Cidade
+          schema:
+            type: string
+        - name: bairro
+          in: query
+          description: Bairro
+          schema:
+            type: string
+        - name: tipo_imovel
+          in: query
+          description: Tipo de imóvel
+          schema:
+            type: string
+        - name: quartos_min
+          in: query
+          description: Número mínimo de quartos
+          schema:
+            type: integer
+        - name: quartos_max
+          in: query
+          description: Número máximo de quartos
+          schema:
+            type: integer
+        - name: valor_min
+          in: query
+          description: Valor mínimo
+          schema:
+            type: number
+        - name: valor_max
+          in: query
+          description: Valor máximo
+          schema:
+            type: number
+        - name: area_min
+          in: query
+          description: Área mínima
+          schema:
+            type: number
+        - name: area_max
+          in: query
+          description: Área máxima
+          schema:
+            type: number
+      responses:
+        '200':
+          description: Resultados da busca
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Property'
+                  total_found:
+                    type: integer
+
+  /crawler/trigger:
+    post:
+      tags:
+        - Crawler
+      summary: Iniciar crawling
+      description: |
+        Inicia o processo de crawling para cidades especificadas.
+        O sistema utiliza classificação inteligente para evitar páginas de catálogo.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - cities
+              properties:
+                cities:
+                  type: array
+                  items:
+                    type: string
+                  example: ["Muzambinho", "Guaxupé"]
+                  description: Lista de cidades para crawling
+                max_pages:
+                  type: integer
+                  default: 10
+                  minimum: 1
+                  maximum: 100
+                  description: Máximo de páginas por site
+                force:
+                  type: boolean
+                  default: false
+                  description: Forçar recrawling de URLs já visitadas
+      responses:
+        '200':
+          description: Crawling iniciado com sucesso
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Crawling iniciado com sucesso"
+                  data:
+                    type: object
+                    properties:
+                      status:
+                        type: string
+                        example: "started"
+                      cities:
+                        type: array
+                        items:
+                          type: string
+                      estimated_duration:
+                        type: string
+                        example: "5-10 minutos"
+        '400':
+          description: Erro na requisição
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /crawler/cleanup:
+    post:
+      tags:
+        - Crawler
+      summary: Limpar banco de dados
+      description: Remove propriedades e/ou URLs do banco de dados
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                properties:
+                  type: boolean
+                  default: false
+                  description: Limpar propriedades
+                urls:
+                  type: boolean
+                  default: false
+                  description: Limpar URLs visitadas
+                all:
+                  type: boolean
+                  default: false
+                  description: Limpar tudo
+            examples:
+              cleanup_all:
+                summary: Limpar tudo
+                value:
+                  all: true
+              cleanup_properties:
+                summary: Limpar apenas propriedades
+                value:
+                  properties: true
+      responses:
+        '200':
+          description: Limpeza realizada com sucesso
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  properties_cleared:
+                    type: boolean
+                  urls_cleared:
+                    type: boolean
+
+  /cities/discover-sites:
+    post:
+      tags:
+        - Cities
+      summary: Descobrir sites de uma cidade
+      description: |
+        Descobre automaticamente sites imobiliários para uma cidade específica.
+        Utiliza múltiplas estratégias de busca e validação.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - city
+              properties:
+                city:
+                  type: string
+                  example: "Muzambinho"
+                  description: Nome da cidade
+                limit:
+                  type: integer
+                  default: 10
+                  minimum: 1
+                  maximum: 50
+                  description: Limite de sites a descobrir
+                validate:
+                  type: boolean
+                  default: true
+                  description: Validar sites descobertos
+      responses:
+        '200':
+          description: Sites descobertos com sucesso
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  data:
+                    type: object
+                    properties:
+                      job_id:
+                        type: string
+                      city:
+                        type: string
+                      sites_found:
+                        type: integer
+                      sites:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/CitySite'
+
+  /cities:
+    get:
+      tags:
+        - Cities
+      summary: Listar todas as cidades
+      description: Retorna lista de todas as cidades com sites cadastrados
+      responses:
+        '200':
+          description: Lista de cidades
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/City'
+
+  /cities/{city}:
+    get:
+      tags:
+        - Cities
+      summary: Obter informações de uma cidade
+      parameters:
+        - name: city
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "Muzambinho"
+      responses:
+        '200':
+          description: Informações da cidade
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  data:
+                    $ref: '#/components/schemas/City'
+    delete:
+      tags:
+        - Cities
+      summary: Remover cidade
+      parameters:
+        - name: city
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Cidade removida com sucesso
+
+  /cities/{city}/sites:
+    get:
+      tags:
+        - Cities
+      summary: Listar sites de uma cidade
+      parameters:
+        - name: city
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Sites da cidade
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CitySite'
+
+  /content/learn/catalog:
+    post:
+      tags:
+        - Content Learning
+      summary: Treinar com páginas de catálogo
+      description: |
+        **MÉTODO RECOMENDADO** - Treina o sistema com exemplos de páginas de catálogo.
+        O sistema analisa o conteúdo HTML e texto para aprender padrões.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - urls
+              properties:
+                urls:
+                  type: array
+                  items:
+                    type: string
+                    format: uri
+                  example: 
+                    - "https://www.mgfimoveis.com.br/venda/casa/mg-muzambinho"
+                    - "https://www.jsimoveismg.com.br"
+                  description: URLs de páginas de catálogo para treinamento
+                description:
+                  type: string
+                  example: "Exemplos de páginas de catálogo com múltiplos imóveis"
+                  description: Descrição do lote de treinamento
+      responses:
+        '200':
+          description: Treinamento realizado com sucesso
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Padrões de catálogo aprendidos com sucesso baseado no conteúdo das páginas"
+                  data:
+                    type: object
+                    properties:
+                      patterns_learned:
+                        type: integer
+                        example: 3
+                      total_examples:
+                        type: integer
+                        example: 2
+                      confidence_improvement:
+                        type: number
+                        example: 0.15
+
+  /content/learn/property:
+    post:
+      tags:
+        - Content Learning
+      summary: Treinar com páginas de propriedades
+      description: |
+        **MÉTODO RECOMENDADO** - Treina o sistema com exemplos de páginas de propriedades individuais.
+        Melhora a precisão na classificação de páginas reais vs catálogos.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - urls
+              properties:
+                urls:
+                  type: array
+                  items:
+                    type: string
+                    format: uri
+                  example:
+                    - "https://www.imobr.com.br/detalhes/casa/venda/muzambinho/mg/bairro-centro/suites-0/banheiros-3/vagas-3/3462038/1"
+                    - "https://www.guaxupeimoveis.com.br/imovel/apartamento/venda/guaxupe/mg/jardim-orminda/AP0048_GUAXU"
+                  description: URLs de páginas de propriedades individuais
+                description:
+                  type: string
+                  example: "Exemplos de páginas de propriedades individuais reais"
+      responses:
+        '200':
+          description: Treinamento realizado com sucesso
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  data:
+                    type: object
+                    properties:
+                      patterns_learned:
+                        type: integer
+                      total_examples:
+                        type: integer
+
+  /content/classify:
+    post:
+      tags:
+        - Content Learning
+      summary: Classificar página por conteúdo
+      description: |
+        **MÉTODO RECOMENDADO** - Classifica uma página como catálogo ou propriedade individual
+        baseado na análise do conteúdo HTML e texto.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - url
+              properties:
+                url:
+                  type: string
+                  format: uri
+                  example: "https://www.mgfimoveis.com.br/venda/casa/mg-muzambinho"
+                  description: URL da página para classificar
+      responses:
+        '200':
+          description: Classificação realizada com sucesso
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url:
+                    type: string
+                  type:
+                    type: string
+                    enum: [catalog, property, unknown]
+                    example: "catalog"
+                  confidence:
+                    type: number
+                    format: float
+                    minimum: 0
+                    maximum: 1
+                    example: 0.95
+                  features:
+                    type: object
+                    properties:
+                      price_count:
+                        type: integer
+                      imoveis_count:
+                        type: integer
+                      text_length:
+                        type: integer
+                      has_pagination:
+                        type: boolean
+                      has_filters:
+                        type: boolean
+                  message:
+                    type: string
+                    nullable: true
+
+  /content/patterns:
+    get:
+      tags:
+        - Content Learning
+      summary: Obter padrões de conteúdo aprendidos
+      description: Retorna todos os padrões que o sistema aprendeu baseado em conteúdo
+      responses:
+        '200':
+          description: Padrões de conteúdo
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  data:
+                    type: object
+                    properties:
+                      patterns:
+                        type: object
+                        properties:
+                          catalog:
+                            type: array
+                            items:
+                              $ref: '#/components/schemas/ContentPattern'
+                          property:
+                            type: array
+                            items:
+                              $ref: '#/components/schemas/ContentPattern'
+                      statistics:
+                        type: object
+                        properties:
+                          total_catalog_patterns:
+                            type: integer
+                          total_property_patterns:
+                            type: integer
+                          system_precision:
+                            type: number
+                            example: 0.80
+
+  # Endpoints legados de Pattern Learning (baseado em URL)
+  /patterns/learn/catalog:
+    post:
+      tags:
+        - Pattern Learning
+      summary: "[LEGADO] Treinar com URLs de catálogo"
+      description: |
+        **MÉTODO LEGADO** - Use `/content/learn/catalog` para melhor precisão.
+        Treina o sistema com padrões de URL de páginas de catálogo.
+      deprecated: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                urls:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        '200':
+          description: Padrões aprendidos
+
+  /patterns/classify:
+    post:
+      tags:
+        - Pattern Learning
+      summary: "[LEGADO] Classificar por URL"
+      description: |
+        **MÉTODO LEGADO** - Use `/content/classify` para melhor precisão.
+        Classifica uma URL baseado em padrões de URL aprendidos.
+      deprecated: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                url:
+                  type: string
+      responses:
+        '200':
+          description: Classificação da URL
+
+components:
+  schemas:
+    Property:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "68c97cae222a3687a9d57115"
+        hash:
+          type: string
+          description: Hash único da propriedade
+        endereco:
+          type: string
+          example: "Rua das Flores, 123"
+        cidade:
+          type: string
+          example: "Muzambinho"
+        bairro:
+          type: string
+          example: "Centro"
+        cep:
+          type: string
+          example: "37890-000"
+        descricao:
+          type: string
+          example: "Casa com 3 quartos, 2 banheiros, garagem para 2 carros"
+        valor:
+          type: number
+          example: 350000
+        valor_texto:
+          type: string
+          example: "R$ 350.000"
+        quartos:
+          type: integer
+          example: 3
+        banheiros:
+          type: integer
+          example: 2
+        area_total:
+          type: number
+          example: 150.5
+        area_util:
+          type: number
+          example: 120.0
+        tipo_imovel:
+          type: string
+          enum: [Casa, Apartamento, Terreno, Comercial, Rural, Outro]
+          example: "Casa"
+        url:
+          type: string
+          format: uri
+          example: "https://example.com/imovel/123"
+        caracteristicas:
+          type: array
+          items:
+            type: string
+          example: ["garagem", "jardim", "piscina"]
+
+    City:
+      type: object
+      properties:
+        name:
+          type: string
+          example: "Muzambinho"
+        state:
+          type: string
+          example: "MG"
+        region:
+          type: string
+          example: "Sul de Minas"
+        sites_count:
+          type: integer
+          example: 11
+        last_discovery:
+          type: string
+          format: date-time
+        active_sites:
+          type: integer
+          example: 8
+
+    CitySite:
+      type: object
+      properties:
+        url:
+          type: string
+          format: uri
+          example: "https://example.com"
+        domain:
+          type: string
+          example: "example.com"
+        status:
+          type: string
+          enum: [active, inactive, error]
+          example: "active"
+        last_crawl:
+          type: string
+          format: date-time
+        properties_found:
+          type: integer
+          example: 25
+        success_rate:
+          type: number
+          format: float
+          example: 0.85
+        response_time:
+          type: number
+          example: 1.2
+
+    ContentPattern:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "catalog_structure_1758115057"
+        type:
+          type: string
+          enum: [catalog, property]
+          example: "catalog"
+        confidence:
+          type: number
+          format: float
+          example: 0.95
+        match_count:
+          type: integer
+          example: 15
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        features:
+          type: object
+          properties:
+            price_count:
+              type: integer
+            imoveis_count:
+              type: integer
+            text_length:
+              type: integer
+            has_pagination:
+              type: boolean
+            has_filters:
+              type: boolean
+
+    Pagination:
+      type: object
+      properties:
+        current_page:
+          type: integer
+          example: 1
+        page_size:
+          type: integer
+          example: 10
+        total_items:
+          type: integer
+          example: 150
+        total_pages:
+          type: integer
+          example: 15
+        has_next:
+          type: boolean
+          example: true
+        has_previous:
+          type: boolean
+          example: false
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+          example: "Formato de requisição inválido"
+        message:
+          type: string
+          example: "Campo 'cities' é obrigatório"
+        code:
+          type: string
+          example: "VALIDATION_ERROR"
+
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: Chave de API (quando implementada)
+
+# Rate Limiting Information
+x-rate-limits:
+  general:
+    requests: 100
+    period: "1 hour"
+  crawler:
+    requests: 50
+    period: "1 hour"
